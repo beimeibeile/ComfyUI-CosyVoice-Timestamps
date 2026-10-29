@@ -89,6 +89,7 @@ def health():
         "status": "ok" if _cosyvoice is not None else "loading",
         "model_loaded": _cosyvoice is not None,
         "sample_rate": _SAMPLE_RATE,
+        "device": getattr(app.state, "device", "auto"),
     }
 
 
@@ -160,6 +161,11 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--cosyvoice_dir", default="", help="CosyVoice 源码目录(自动加入 sys.path)")
+    parser.add_argument(
+        "--device", default="auto", choices=["auto", "cuda", "cpu"],
+        help="推理设备: auto=有 CUDA 用 GPU, 默认; cuda=强制 GPU; cpu=强制 CPU(不占显存,"
+             "与 ComfyUI/H3 视频生成同机跑时推荐, 避免显存冲突)",
+    )
     args = parser.parse_args()
 
     src = args.cosyvoice_dir or _COSYVOICE_SRC_HINT
@@ -169,6 +175,16 @@ def main():
     else:
         print("[CosyVoice] 提示: 未找到 CosyVoice 源码目录, 将依赖已 pip 安装的 cosyvoice 包")
 
+    # 必须早于任何 torch import: 屏蔽 CUDA 后 torch.cuda.is_available()=False,
+    # CosyVoice 模型(cosyvoice/cli/model.py)会整体落到 CPU, 不占显存。
+    if args.device == "cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        print("[CosyVoice] --device cpu: 已屏蔽 CUDA, 模型将使用 CPU 推理(不占 GPU 显存)")
+    elif args.device == "cuda":
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        print("[CosyVoice] --device cuda: 强制 GPU 推理")
+
+    app.state.device = args.device
     app.state.model_dir = os.path.abspath(args.model_dir)
     uvicorn.run(app, host=args.host, port=args.port)
 
