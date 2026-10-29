@@ -3,7 +3,6 @@
 CosyVoice 本地 TTS + **同源字级时间戳**（source-aligned word-level timestamps）标准 ComfyUI 自定义节点。
 
 > **同源**
->
 > ：时间戳直接取自 CosyVoice 本次合成的同一个音频流（句级为流式合成真实音频边界，字级为同源派生 + VAD 停顿校正），而非事后用 ASR / 强制对齐测量。适合需要 "逐词时间边界" 驱动下游时序的工作流（如 MiniMax H3 短剧对话时序、字幕、口型同步）。
 
 ## 架构
@@ -73,7 +72,6 @@ modelscope download --model iic/CosyVoice2-0.5B --local_dir models\CosyVoice2-0.
 ```
 
 > 若 HuggingFace 可访问：
->
 > `pip install huggingface_hub && huggingface-cli download FunAudioLLM/CosyVoice2-0.5B --local-dir models/CosyVoice2-0.5B`
 
 ### 第 2 步：启动服务
@@ -105,24 +103,24 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 
 
 
-| 参数              | 说明                                                 |
-| --------------- | -------------------------------------------------- |
-| `tts_text`      | 待合成文本（自动分句，多行也可）                                   |
-| `server_url`    | CosyVoice 服务地址，默认 `http://127.0.0.1:8000`          |
-| `voice`         | `zero_shot`（参考音频克隆，默认）/ `instruct`（指令控制）/ `sft`（预置音色）。注意：CosyVoice2-0.5B 官方模型不含 sft 说话人库（spk2info），sft 会报 KeyError，默认请用 zero_shot；sft 需另行准备说话人 embedding 资源 |
-| `prompt_wav`    | zero\_shot 参考音频路径（服务端可访问的绝对路径）                     |
-| `prompt_text`   | 参考音频对应文字                                           |
-| `sft_spk`       | sft 预置说话人（如 `中文男`/`中文女`）                           |
-| `instruct_text` | instruct 指令（如 `请用广东话表达。`）                          |
-| `seed`          | 随机种子，同种子可复现                                        |
-| `stream`        | 流式合成（推荐开启，时间戳基于流式真实音频）                             |
-| `pause_ms`      | 句间停顿时长，默认 120ms（防止句子粘连）                            |
+| 参数              | 说明                                                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tts_text`      | 待合成文本（自动分句，多行也可）                                                                                                                                             |
+| `server_url`    | CosyVoice 服务地址，默认 `http://127.0.0.1:8000`                                                                                                                    |
+| `voice`         | `zero_shot`（参考音频克隆，默认）/ `instruct`（指令控制）/ `sft`（预置音色）。注意：CosyVoice2-0.5B 官方模型不含 sft 说话人库（spk2info），sft 会报 KeyError，默认请用 zero\_shot；sft 需另行准备说话人 embedding 资源 |
+| `prompt_wav`    | zero\_shot 参考音频路径（服务端可访问的绝对路径）                                                                                                                               |
+| `prompt_text`   | 参考音频对应文字                                                                                                                                                     |
+| `sft_spk`       | sft 预置说话人（如 `中文男`/`中文女`）                                                                                                                                     |
+| `instruct_text` | instruct 指令（如 `请用广东话表达。`）                                                                                                                                    |
+| `seed`          | 随机种子，同种子可复现                                                                                                                                                  |
+| `stream`        | 流式合成（推荐开启，时间戳基于流式真实音频）                                                                                                                                       |
+| `pause_ms`      | 句间停顿时长，默认 120ms（防止句子粘连）                                                                                                                                      |
 
 ## 输出
 
 
 
-* **AUDIO**：ComfyUI 标准音频（22.05kHz 单声道 WAV 字节流）
+* **AUDIO**：ComfyUI 标准音频（CosyVoice2 为 24kHz 单声道，sample_rate 由服务端返回）
 
 * **WORD\_TIMESTAMPS**：JSON 字符串，字级时间戳
 
@@ -140,21 +138,30 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 
 ## H3 短剧工作流接入
 
-`examples/h3_workflow.json` 提供 API 调用格式的最小示例。典型流程：
-
-
+`examples/h3_workflow.json` 提供 API 调用格式的完整闭环示例。ComfyUI 内流程：
 
 ```
 剧本文本 → CosyVoiceTTSWithTimestamps（本节点）
-              ├─ WORD_TIMESTAMPS → 驱动 H3 分段提示词的 <d> 对话时序
-              └─ AUDIO → 与 H3 视频合成/二次配音
+              ├─ AUDIO  ──────────────→ SaveAudioAdvanced（存 flac/wav）
+              ├─ SRT    ──────────────→ CosyVoiceSRTFileWriter（落盘 .srt 字幕文件）
+              ├─ WORD_TIMESTAMPS ─────→ 驱动 H3 分段提示词的 <d> 对话时序 / 逐字对齐
+              └─ DURATION_SECONDS ────→ 对齐 H3 视频片段时长
 ```
 
-在 ComfyUI 中：添加本节点 → 将 `WORD_TIMESTAMPS`（STRING）接入你现有的提示词解析节点 → 时间戳即用于对齐每句台词的画面时序。
+接入步骤（ComfyUI 画布）：
+
+1. 添加 `CosyVoiceTTSWithTimestamps`，填入台词文本与 `prompt_wav`/`prompt_text`（参考音色）。
+2. `AUDIO` → `SaveAudioAdvanced`（格式选 flac），输出口播音频文件。
+3. `SRT` → `CosyVoiceSRTFileWriter`，输出同源字幕文件 `output/srt/*.srt`。
+4. 剪辑合成（如剪映）：H3 生成的视频片段 + 口播音频 + `.srt` 字幕直接导入，
+   字幕轨与口播严格同源对齐；如需逐字字幕，用 `WORD_TIMESTAMPS` 生成逐字 SRT/ASS 再导入。
+
+时间戳与音频来自同一次流式合成，句级边界即真实音频边界，因此字幕不会出现
+"口播已结束字幕还没走完"或反向错位的不同源漂移。
 
 ## 精度说明与调优
 
-详见 [docs/精度与调优.md](docs/精度与调优.md)。要点：
+详见 [docs / 精度与调优.md](docs/精度与调优.md)。要点：
 
 
 

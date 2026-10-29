@@ -2,7 +2,7 @@
   "3": {
     "class_type": "CosyVoiceTTSWithTimestamps",
     "inputs": {
-      "tts_text": "小明，等一下！这个方案真的可行吗？",
+      "tts_text": "小明，等一下！这个方案真的可行吗？我们先把证据链对齐，再下结论。",
       "server_url": "http://127.0.0.1:8000",
       "voice": "zero_shot",
       "prompt_wav": "D:/voices/ref_voice.wav",
@@ -18,12 +18,19 @@
       "pause_ms": 120
     }
   },
-  "9": {
-    "class_type": "SaveAudioWeb",
+  "7": {
+    "class_type": "SaveAudioAdvanced",
     "inputs": {
       "audio": ["3", 0],
-      "filename_prefix": "cosyvoice_tts",
-      "format": "wav"
+      "filename_prefix": "audio/h3_dialogue",
+      "format": "flac"
+    }
+  },
+  "9": {
+    "class_type": "CosyVoiceSRTFileWriter",
+    "inputs": {
+      "srt": ["3", 2],
+      "filename_prefix": "srt/h3_dialogue"
     }
   }
 }

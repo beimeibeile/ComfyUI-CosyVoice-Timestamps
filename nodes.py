@@ -192,4 +192,59 @@ class CosyVoiceTTSWithTimestamps:
 NODE_CLASS_MAPPINGS["CosyVoiceTTSWithTimestamps"] = CosyVoiceTTSWithTimestamps
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceTTSWithTimestamps"] = "CosyVoice TTS With Timestamps"
 
+
+class CosyVoiceSRTFileWriter:
+    """把 CosyVoiceTTSWithTimestamps 的 SRT 输出落盘为 .srt 字幕文件.
+
+    用于 H3 短剧/口播成片闭环: 音频(SaveAudioAdvanced) + SRT 字幕文件一起输出,
+    导入剪映等剪辑软件时字幕轨与口播严格同源对齐.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "srt": ("STRING", {"multiline": True, "tooltip": "来自 CosyVoiceTTSWithTimestamps 的 SRT 输出"}),
+            },
+            "optional": {
+                "filename_prefix": (
+                    "STRING",
+                    {"default": "srt/cosyvoice", "tooltip": "输出文件名前缀，可带子目录（如 srt/短剧01）"},
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("FILE_PATH", "SRT")
+    FUNCTION = "write"
+    CATEGORY = "TTS/CosyVoice"
+
+    def write(self, srt, filename_prefix="srt/cosyvoice"):
+        srt = srt or ""
+        if not srt.strip():
+            return ("", srt)
+        try:
+            from folder_paths import get_output_directory, get_save_image_path
+            full_output_folder, filename, counter, _subfolder, _prefix = get_save_image_path(
+                filename_prefix, get_output_directory()
+            )
+        except Exception:
+            # 兜底: 相对仓库根 output 目录
+            import os
+            full_output_folder = os.path.abspath(
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
+            )
+            filename = "cosyvoice_srt"
+            counter = 1
+            os.makedirs(full_output_folder, exist_ok=True)
+        import os
+        path = os.path.join(full_output_folder, f"{filename}_{counter:05}.srt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(srt)
+        return (path, srt)
+
+
+NODE_CLASS_MAPPINGS["CosyVoiceSRTFileWriter"] = CosyVoiceSRTFileWriter
+NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceSRTFileWriter"] = "CosyVoice SRT File Writer"
+
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
