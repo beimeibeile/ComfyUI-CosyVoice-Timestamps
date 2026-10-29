@@ -108,7 +108,7 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 | `tts_text`      | 待合成文本（自动分句，多行也可）                                                                                                                                             |
 | `server_url`    | CosyVoice 服务地址，默认 `http://127.0.0.1:8000`                                                                                                                    |
 | `voice`         | `zero_shot`（参考音频克隆，默认）/ `instruct`（指令控制）/ `sft`（预置音色）。注意：CosyVoice2-0.5B 官方模型不含 sft 说话人库（spk2info），sft 会报 KeyError，默认请用 zero\_shot；sft 需另行准备说话人 embedding 资源 |
-| `prompt_wav`    | zero\_shot 参考音频路径（服务端可访问的绝对路径）                                                                                                                               |
+| `prompt_wav`    | zero\_shot 参考音频路径（服务端可访问的绝对路径；可先用 CosyVoice 源码自带的 `models/_cosyvoice_src/asset/zero_shot_prompt.wav` 验证） |
 | `prompt_text`   | 参考音频对应文字                                                                                                                                                     |
 | `sft_spk`       | sft 预置说话人（如 `中文男`/`中文女`）                                                                                                                                     |
 | `instruct_text` | instruct 指令（如 `请用广东话表达。`）                                                                                                                                    |
