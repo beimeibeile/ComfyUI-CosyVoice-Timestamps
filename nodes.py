@@ -8,7 +8,7 @@ ComfyUI-CosyVoice-Timestamps: CosyVoice 同源字级时间戳 TTS 客户端节�
                 ⇄  CosyVoice2-0.5B (流式合成 + 句级精确计时 + 字级分配)
 
 节点输出:
-    AUDIO           : ComfyUI 标准 AUDIO 字典 {"waveform": Tensor[1, N], "sample_rate": int}
+    AUDIO           : ComfyUI 标准 AUDIO 字典 {"waveform": Tensor[1, 1, N], "sample_rate": int}
     WORD_TIMESTAMPS : JSON 字符串 [{word, start_ms, end_ms}, ...]
     SRT             : 标准 SRT 字幕文本
     DURATION_SECONDS: 合成音频总时长(秒)
@@ -177,7 +177,7 @@ class CosyVoiceTTSWithTimestamps:
         raw = np.frombuffer(base64.b64decode(audio_b64), dtype=np.float32)
         if raw.size == 0:
             raise RuntimeError("[CosyVoice] 合成音频为空")
-        waveform = torch.from_numpy(raw).reshape(1, -1).float()
+        waveform = torch.from_numpy(raw).reshape(1, 1, -1).float()  # [batch=1, channels=1, samples] 兼容 ComfyUI 0.34+ AUDIO 格式
         sample_rate = int(result.get("sample_rate", 22050))
 
         words = result.get("word_timestamps") or []
