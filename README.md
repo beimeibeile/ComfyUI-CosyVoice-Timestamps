@@ -61,7 +61,7 @@ pip install -r requirements-server.txt
 
 # 1.4 下载模型（二选一源）
 pip install modelscope
-modelscope download --model iic/CosyVoice2-0.5B --local_dir D:\DobaoWork_Project\Comfyui_CosyVoice_TTS\models\CosyVoice2-0.5B
+modelscope download --model iic/CosyVoice2-0.5B --local_dir models\CosyVoice2-0.5B
 ```
 
 > 若 HuggingFace 可访问：`pip install huggingface_hub && huggingface-cli download FunAudioLLM/CosyVoice2-0.5B --local-dir models/CosyVoice2-0.5B`
@@ -73,13 +73,14 @@ modelscope download --model iic/CosyVoice2-0.5B --local_dir D:\DobaoWork_Project
 conda activate cosyvoice
 python server/tts_server.py --model_dir models/CosyVoice2-0.5B --port 8000 --cosyvoice_dir <你的CosyVoice源码路径>
 # 看到 "[CosyVoice] 模型就绪" 即成功；健康检查: http://127.0.0.1:8000/health
+# 若 8000 端口被其他服务占用：换用 --port 8001（或任意空闲端口），并把节点参数 server_url 同步改为 http://127.0.0.1:8001
 ```
 
 ### 第 3 步：安装 ComfyUI 节点
 
 ```powershell
 # 将仓库克隆/复制到 custom_nodes
-cd D:\Ai\ComfyUI-aki-v3.2\ComfyUI\custom_nodes
+cd <你的ComfyUI目录>\custom_nodes
 git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 # 或直接把本项目目录拷贝为 custom_nodes/ComfyUI-CosyVoice-Timestamps
 ```
