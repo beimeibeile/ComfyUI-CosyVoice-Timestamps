@@ -76,7 +76,8 @@ def _load_model():
     print(f"[CosyVoice] 加载模型: {model_dir}")
     from cosyvoice.cli.cosyvoice import AutoModel
     _cosyvoice = AutoModel(model_dir=model_dir)
-    _cosyvoice.eval()
+    if hasattr(_cosyvoice, "eval"):  # CosyVoice2 是业务封装类，无 eval；CosyVoice3 等 nn.Module 容器可 eval
+        _cosyvoice.eval()
     global _SAMPLE_RATE
     _SAMPLE_RATE = int(getattr(_cosyvoice, "sample_rate", 22050))
     print(f"[CosyVoice] 模型就绪, 采样率 {_SAMPLE_RATE}Hz")
