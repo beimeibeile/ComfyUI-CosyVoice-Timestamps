@@ -174,7 +174,7 @@ class CosyVoiceTTSWithTimestamps:
         if not audio_b64:
             raise RuntimeError(f"[CosyVoice] 服务未返回音频: {json.dumps(result)[:300]}")
 
-        raw = np.frombuffer(base64.b64decode(audio_b64), dtype=np.float32)
+        raw = np.frombuffer(base64.b64decode(audio_b64), dtype=np.int16).astype(np.float32) / 32768.0  # 服务端输出 16-bit PCM WAV，先按 int16 解码再归一化到 [-1,1]
         if raw.size == 0:
             raise RuntimeError("[CosyVoice] 合成音频为空")
         waveform = torch.from_numpy(raw).reshape(1, 1, -1).float()  # [batch=1, channels=1, samples] 兼容 ComfyUI 0.34+ AUDIO 格式
