@@ -1,0 +1,9 @@
+# 模型与外部源码（大文件，不入库；由部署脚本/命令单独下载）
+models/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

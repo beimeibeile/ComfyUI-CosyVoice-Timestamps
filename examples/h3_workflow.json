@@ -1,0 +1,29 @@
+{
+  "3": {
+    "class_type": "CosyVoiceTTSWithTimestamps",
+    "inputs": {
+      "tts_text": "小明，等一下！这个方案真的可行吗？",
+      "server_url": "http://127.0.0.1:8000",
+      "voice": "zero_shot",
+      "prompt_wav": "D:/voices/ref_voice.wav",
+      "prompt_text": "这是我的参考音色。",
+      "sft_spk": "",
+      "instruct_text": "",
+      "language": "中文",
+      "seed": 42,
+      "stream": true,
+      "temperature": 0.7,
+      "top_p": 0.8,
+      "speed": 1.0,
+      "pause_ms": 120
+    }
+  },
+  "9": {
+    "class_type": "SaveAudioWeb",
+    "inputs": {
+      "audio": ["3", 0],
+      "filename_prefix": "cosyvoice_tts",
+      "format": "wav"
+    }
+  }
+}

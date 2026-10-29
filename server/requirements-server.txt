@@ -1,0 +1,10 @@
+# CosyVoice 独立服务端依赖（Python 3.10 venv）
+# 安装顺序:
+#   1) git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
+#      cd CosyVoice && pip install -r requirements.txt
+#   2) pip install -r requirements-server.txt
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+numpy
+# torch / torchaudio 请按官方指引安装(CUDA 版)

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comfyui-cosyvoice-timestamps"
+version = "0.1.0"
+description = "CosyVoice TTS with source-aligned (同源) word-level timestamps as a standard ComfyUI custom node"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "numpy",
+    "torch",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+]
+
+[tool.setuptools]
+packages = ["server"]
+py-modules = ["nodes"]

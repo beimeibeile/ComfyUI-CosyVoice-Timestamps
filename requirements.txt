@@ -1,0 +1,3 @@
+# ComfyUI 侧依赖（客户端节点，尽量零依赖）
+# 节点本身仅使用标准库 urllib/json/base64 + torch/numpy（ComfyUI 自带）。
+# 无需向 ComfyUI 环境安装 CosyVoice 相关包。
