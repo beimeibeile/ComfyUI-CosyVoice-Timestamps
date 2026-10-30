@@ -123,6 +123,24 @@ class CosyVoiceTTSWithTimestamps:
                     "INT",
                     {"default": 120, "min": 0, "max": 2000, "tooltip": "句间插入的停顿时长(ms)，避免句子粘连"},
                 ),
+                "device": (
+                    ["", "auto", "cuda", "cpu"],
+                    {
+                        "default": "",
+                        "tooltip": "模型加载设备(运行中动态切换, 无需重启服务): 空=不干预(用服务端启动参数); "
+                                   "cpu=内存加载(不占显存, 与 H3 视频生成同机推荐); "
+                                   "cuda=显存加载(合成更快); auto=有 CUDA 自动用 GPU。"
+                                   "切换会卸载并重载模型(本次合成含加载耗时)",
+                    },
+                ),
+                "idle_timeout": (
+                    "INT",
+                    {
+                        "default": 0, "min": 0, "max": 86400,
+                        "tooltip": "空闲自动卸载秒数: 0=不干预(用服务端 --idle_timeout, 默认 300)。"
+                                   "服务常驻, 空闲超时自动卸载模型释放内存/显存, 下次请求自动重载",
+                    },
+                ),
             },
         }
 
@@ -147,6 +165,8 @@ class CosyVoiceTTSWithTimestamps:
         top_p=0.8,
         speed=1.0,
         pause_ms=120,
+        device="",
+        idle_timeout=0,
     ):
         if not tts_text or not tts_text.strip():
             raise ValueError("[CosyVoice] tts_text 为空，请输入待合成文本")
@@ -166,6 +186,10 @@ class CosyVoiceTTSWithTimestamps:
             "speed": float(speed),
             "pause_ms": int(pause_ms),
         }
+        if device:  # 仅在显式指定时下发, 空=服务端保持当前配置
+            payload["device"] = device
+        if int(idle_timeout) > 0:  # 0=不干预服务端当前空闲卸载配置
+            payload["idle_timeout"] = float(int(idle_timeout))
         result = _post_json(server_url, payload)
         if not result.get("ok"):
             raise RuntimeError(f"[CosyVoice] 服务端错误: {result.get('error', '未知错误')}")

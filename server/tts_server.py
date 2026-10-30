@@ -57,6 +57,9 @@ class TTSRequest(BaseModel):
     top_p: float = 0.8
     speed: float = 1.0
     pause_ms: int = 120
+    # 动态配置(空/0=不干预, 用服务端启动参数)
+    device: str = ""                   # auto | cuda | cpu: 模型加载设备(内存/显存)
+    idle_timeout: float = 0            # 空闲卸载秒数
 
 
 app = FastAPI(title="CosyVoice TTS With Timestamps", version="0.1.0")
@@ -74,20 +77,54 @@ _last_activity = 0.0                    # 最近一次请求完成时间(epoch �
 _lazy_enabled = False                   # --lazy: 惰性加载(用时才加载)
 _idle_timeout = 300.0                   # 空闲 N 秒后自动卸载模型(0=不卸载)
 _LOADING = False                        # 加载中标记(供 health 展示)
+_original_cuda_available = None         # torch.cuda.is_available 原函数(设备切换用)
+
+
+def _set_cuda_visible(on: bool):
+    """控制 torch 视角的 CUDA 可用性: on=False 时 patch is_available 为 False,
+    CosyVoice 各组件(model/frontend/flow)据此全部落到 CPU 加载与推理(不占显存);
+    on=True 恢复原函数(正常 GPU 路径). 无需重启进程, 运行中可动态切换."""
+    global _original_cuda_available
+    import torch
+    if _original_cuda_available is None:
+        _original_cuda_available = torch.cuda.is_available
+    if on:
+        torch.cuda.is_available = _original_cuda_available
+    else:
+        torch.cuda.is_available = lambda: False
+
+
+def _apply_config(device: str = "", idle_timeout: float = 0):
+    """按请求动态调整配置: 更新空闲卸载时间; 设备不一致时卸载模型并切换(下次请求自动重载)."""
+    global _idle_timeout
+    changed = False
+    if idle_timeout and idle_timeout > 0 and idle_timeout != _idle_timeout:
+        _idle_timeout = idle_timeout
+        print(f"[CosyVoice] 空闲卸载时间更新为 {_idle_timeout:.0f}s")
+        changed = True
+    if device and device != app.state.device:
+        print(f"[CosyVoice] 切换模型加载设备: {app.state.device} -> {device} (卸载后按新设备重载)")
+        _unload_model()
+        app.state.device = device
+        _set_cuda_visible(device != "cpu")
+        changed = True
+    if changed:
+        print(f"[CosyVoice] 当前配置: device={app.state.device}, idle_timeout={_idle_timeout:.0f}s")
 
 
 def _load_model_impl():
-    """真正加载模型(须持 _model_lock 调用)."""
+    """真正加载模型(须持 _model_lock 调用). 设备由 app.state.device 决定."""
     global _cosyvoice, _SAMPLE_RATE
     model_dir = app.state.model_dir
-    print(f"[CosyVoice] {'惰性' if _lazy_enabled else ''}加载模型: {model_dir}")
+    print(f"[CosyVoice] {'惰性' if _lazy_enabled else ''}加载模型({app.state.device}): {model_dir}")
     t0 = time.time()
+    _set_cuda_visible(app.state.device != "cpu")  # cpu 时强制 torch 视角无 CUDA
     from cosyvoice.cli.cosyvoice import AutoModel
     _cosyvoice = AutoModel(model_dir=model_dir)
     if hasattr(_cosyvoice, "eval"):  # CosyVoice2 是业务封装类，无 eval；CosyVoice3 等 nn.Module 容器可 eval
         _cosyvoice.eval()
     _SAMPLE_RATE = int(getattr(_cosyvoice, "sample_rate", 22050))
-    print(f"[CosyVoice] 模型就绪(耗时 {round(time.time() - t0, 1)}s), 采样率 {_SAMPLE_RATE}Hz")
+    print(f"[CosyVoice] 模型就绪({app.state.device}, 耗时 {round(time.time() - t0, 1)}s), 采样率 {_SAMPLE_RATE}Hz")
 
 
 def _ensure_loaded():
@@ -159,7 +196,8 @@ def health():
 @app.post("/tts_with_timestamps")
 def tts_with_timestamps(req: TTSRequest):
     global _last_activity
-    _ensure_loaded()  # 首次/超时后自动加载(阻塞等待, 节点端 HTTP timeout=300s)
+    _apply_config(req.device, req.idle_timeout)  # 先应用动态配置(设备切换=卸载+下次加载)
+    _ensure_loaded()  # 首次/超时/设备切换后自动加载(阻塞等待, 节点端 HTTP timeout=300s)
     _last_activity = time.time()
     t0 = time.time()
     from timestamps import synthesize_with_timestamps  # 与 server 同目录
@@ -248,13 +286,12 @@ def main():
     else:
         print("[CosyVoice] 提示: 未找到 CosyVoice 源码目录, 将依赖已 pip 安装的 cosyvoice 包")
 
-    # 必须早于任何 torch import: 屏蔽 CUDA 后 torch.cuda.is_available()=False,
-    # CosyVoice 模型(cosyvoice/cli/model.py)会整体落到 CPU, 不占显存。
+    # 设备控制统一走 torch.cuda.is_available 的 patch 机制(见 _set_cuda_visible),
+    # 启动时不设 CUDA_VISIBLE_DEVICES 环境变量——运行时改 env 对已初始化的 torch 无效,
+    # 动态切换内存/显存必须靠加载时 patch torch 视角的 CUDA 可用性。
     if args.device == "cpu":
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        print("[CosyVoice] --device cpu: 已屏蔽 CUDA, 模型将使用 CPU 推理(不占 GPU 显存)")
+        print("[CosyVoice] --device cpu: 模型将加载到内存推理(不占 GPU 显存, 可随时切回显存)")
     elif args.device == "cuda":
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         print("[CosyVoice] --device cuda: 强制 GPU 推理")
 
     app.state.device = args.device
