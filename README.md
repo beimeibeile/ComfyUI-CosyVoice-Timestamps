@@ -113,13 +113,14 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 # 或直接把本项目目录拷贝为 custom_nodes/ComfyUI-CosyVoice-Timestamps
 ```
 
-重启 ComfyUI，节点位于 `TTS/CosyVoice` → 包含三个节点：
+重启 ComfyUI，节点位于 `TTS/CosyVoice` → 包含四个节点：
 
-* **`CosyVoice TTS With Timestamps`**：主合成节点（AUDIO + 字级/句级时间戳 + SRT + 时长）
+* **`CosyVoice TTS With Timestamps`**：主合成节点（AUDIO + 字级/句级时间戳 + SRT + 时长）。`sft_spk` 为**下拉选择**（自动读取服务端已注册说话人；注册/删除后点节点上「🔄 刷新说话人列表」按钮同步，无需重启）
 * **`CosyVoice SRT File Writer`**：把 SRT 落盘为 `.srt` 字幕文件（H3 短剧/口播闭环）
-* **`CosyVoice Register Speaker`**：把一段参考音频注册为 sft 预置说话人（填 `spk_id` + 参考音频路径，执行一次即写入模型目录 `spk2info.pt`，长期有效）
+* **`CosyVoice Register Speaker`**：把一段参考音频注册为 sft 预置说话人（`overwrite=false` 时重名会拒绝并提示，防止误覆盖；`overwrite=true` 才允许用新音频覆盖同一说话人）
+* **`CosyVoice Delete Speaker`**：删除已注册的说话人（同步持久化到 `spk2info.pt`）
 
-sft 使用流程：先用 `CosyVoice Register Speaker` 注册（如 `spk_id=中文男`，参考音频用周鸿祎.mp3），再在主节点 `voice=sft`、`sft_spk=中文男` 合成。
+sft 使用流程：先用 `CosyVoice Register Speaker` 注册（如 `spk_id=中文男`，参考音频用周鸿祎.mp3），再在主节点 `voice=sft`、`sft_spk=中文男` 合成。服务端 `GET /spks` 只读 `spk2info.pt`（秒回，不触发模型加载），供下拉列表同步。
 
 ## 节点参数
 

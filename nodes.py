@@ -106,8 +106,12 @@ class CosyVoiceTTSWithTimestamps:
                     {"default": "", "tooltip": "参考音频对应的文字内容"},
                 ),
                 "sft_spk": (
-                    "STRING",
-                    {"default": "", "tooltip": "voice=sft 时的预置说话人 ID（如 中文男/中文女）"},
+                    ["中文男"],
+                    {
+                        "default": "中文男",
+                        "tooltip": "sft 预置说话人(可用列表以服务端 spk2info.pt 为准)。"
+                                   "用 CosyVoice Register Speaker 注册/Delete 删除后, 点节点上『刷新说话人列表』按钮同步",
+                    },
                 ),
                 "instruct_text": (
                     "STRING",
@@ -287,6 +291,10 @@ class CosyVoiceRegisterSpeaker:
             },
             "optional": {
                 "prompt_text": ("STRING", {"default": "", "tooltip": "参考音频对应文字(可留空)"}),
+                "overwrite": (
+                    "BOOLEAN",
+                    {"default": False, "tooltip": "spk_id 已存在时: False=拒绝并提示(防误覆盖); True=用新参考音频覆盖该说话人"},
+                ),
                 "server_url": ("STRING", {"default": "http://127.0.0.1:8000"}),
             },
         }
@@ -296,12 +304,13 @@ class CosyVoiceRegisterSpeaker:
     FUNCTION = "register"
     CATEGORY = "TTS/CosyVoice"
 
-    def register(self, spk_id, prompt_wav, prompt_text="", server_url="http://127.0.0.1:8000"):
+    def register(self, spk_id, prompt_wav, prompt_text="", overwrite=False, server_url="http://127.0.0.1:8000"):
         if not spk_id.strip():
             raise ValueError("[CosyVoice] spk_id 不能为空")
         if not prompt_wav or not prompt_wav.strip():
             raise ValueError("[CosyVoice] 请提供参考音频绝对路径 prompt_wav")
-        payload = {"spk_id": spk_id, "prompt_wav": prompt_wav, "prompt_text": prompt_text or ""}
+        payload = {"spk_id": spk_id, "prompt_wav": prompt_wav,
+                   "prompt_text": prompt_text or "", "overwrite": bool(overwrite)}
         result = _post_json(server_url, payload, path="/register_spk")
         if not result.get("ok"):
             raise RuntimeError(f"[CosyVoice] 注册失败: {result.get('error', '未知错误')}")
@@ -309,7 +318,42 @@ class CosyVoiceRegisterSpeaker:
         return (f"OK: 已注册说话人 '{spk_id}', 持久化到 spk2info.pt", spks)
 
 
+class CosyVoiceDeleteSpeaker:
+    """删除已注册的 sft 说话人(服务端 POST /delete_spk, 同步持久化到 spk2info.pt).
+
+    删除后 CosyVoiceTTSWithTimestamps 的 sft_spk 下拉列表点『刷新说话人列表』按钮即可同步.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "spk_id": ("STRING", {"default": "", "tooltip": "要删除的说话人 ID(如 中文男)"}),
+            },
+            "optional": {
+                "server_url": ("STRING", {"default": "http://127.0.0.1:8000"}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("RESULT", "AVAILABLE_SPKS")
+    FUNCTION = "delete"
+    CATEGORY = "TTS/CosyVoice"
+
+    def delete(self, spk_id, server_url="http://127.0.0.1:8000"):
+        if not spk_id.strip():
+            raise ValueError("[CosyVoice] spk_id 不能为空")
+        result = _post_json(server_url, {"spk_id": spk_id}, path="/delete_spk")
+        if not result.get("ok"):
+            raise RuntimeError(f"[CosyVoice] 删除失败: {result.get('error', '未知错误')}")
+        spks = ", ".join(result.get("available_spks") or ["(无)"])
+        return (f"OK: 已删除说话人 '{spk_id}'", spks)
+
+
 NODE_CLASS_MAPPINGS["CosyVoiceRegisterSpeaker"] = CosyVoiceRegisterSpeaker
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceRegisterSpeaker"] = "CosyVoice Register Speaker"
+
+NODE_CLASS_MAPPINGS["CosyVoiceDeleteSpeaker"] = CosyVoiceDeleteSpeaker
+NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceDeleteSpeaker"] = "CosyVoice Delete Speaker"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

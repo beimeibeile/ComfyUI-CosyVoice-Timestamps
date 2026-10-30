@@ -250,6 +250,56 @@ class RegisterSpkRequest(BaseModel):
     spk_id: str
     prompt_wav: str
     prompt_text: str = ""
+    overwrite: bool = False  # spk_id 已存在时: False=拒绝(防误覆盖), True=覆盖
+
+
+class DeleteSpkRequest(BaseModel):
+    spk_id: str
+
+
+def _load_spk2info():
+    """读取模型目录 spk2info.pt(不加载模型, 秒回): 存在则返回 dict, 否则返回 {}."""
+    path = os.path.join(app.state.model_dir, "spk2info.pt")
+    if not os.path.isfile(path):
+        return {}
+    import torch
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True)
+    except Exception:
+        return {}
+
+
+@app.get("/spks")
+def list_spks():
+    """可用 sft 说话人列表(只读 spk2info.pt, 不触发模型加载)."""
+    spks = list(_load_spk2info().keys())
+    return {"ok": True, "available_spks": spks}
+
+
+@app.post("/delete_spk")
+def delete_spk(req: DeleteSpkRequest):
+    """删除已注册的 sft 说话人并持久化到 spk2info.pt."""
+    try:
+        spk_id = (req.spk_id or "").strip()
+        if not spk_id:
+            return {"ok": False, "error": "spk_id 不能为空"}
+        path = os.path.join(app.state.model_dir, "spk2info.pt")
+        if not os.path.isfile(path):
+            return {"ok": False, "error": "说话人库不存在(无已注册说话人)"}
+        import torch
+        spk2info = torch.load(path, map_location="cpu", weights_only=True)
+        if spk_id not in spk2info:
+            return {"ok": False, "error": f"说话人 '{spk_id}' 不存在, 当前可用: {list(spk2info.keys())}"}
+        del spk2info[spk_id]
+        torch.save(spk2info, path)
+        # 若模型已加载, 同步内存中的 spk2info, 避免与磁盘不一致
+        mem = getattr(getattr(_cosyvoice, "frontend", None), "spk2info", None)
+        if mem is not None:
+            mem.pop(spk_id, None)
+        return {"ok": True, "spk_id": spk_id, "available_spks": list(spk2info.keys())}
+    except Exception as e:
+        traceback.print_exc()
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 @app.post("/register_spk")
@@ -258,6 +308,7 @@ def register_spk(req: RegisterSpkRequest):
 
     注册后 sft 模式即可用 sft_spk=spk_id 调用; 说话人 embedding 由当前模型前端生成,
     与 CosyVoice2 完全同源(比直接引用其它模型的 spk2info.pt 兼容).
+    重名保护: spk_id 已存在且 overwrite=False 时拒绝注册, 防止误覆盖.
     """
     global _last_activity
     try:
@@ -270,6 +321,13 @@ def register_spk(req: RegisterSpkRequest):
             return {"ok": False, "error": f"参考音频不存在: {req.prompt_wav}"}
         if not hasattr(_cosyvoice, "frontend") or not hasattr(_cosyvoice.frontend, "spk2info"):
             return {"ok": False, "error": "当前模型前端不支持注册说话人(spk2info)"}
+
+        if spk_id in _cosyvoice.frontend.spk2info and not req.overwrite:
+            return {
+                "ok": False,
+                "error": f"说话人 '{spk_id}' 已存在(可用: {list(_cosyvoice.frontend.spk2info.keys())})。"
+                         f"如需用新参考音频覆盖该说话人, 请将 overwrite=true 再试。",
+            }
 
         # 生成与当前模型完全同源的说话人 embedding(与 zero_shot 同一条前端提取链路)。
         # 注意: 不能用官方 add_zero_shot_spk——它存入的 key 是 llm_embedding/flow_embedding,
