@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gc
 import io
 import os
 import sys
+import threading
 import time
 import traceback
 
@@ -67,36 +69,98 @@ app.add_middleware(
 
 _cosyvoice = None
 _SAMPLE_RATE = 22050
+_model_lock = threading.Lock()          # 串行化加载/卸载
+_last_activity = 0.0                    # 最近一次请求完成时间(epoch 秒)
+_lazy_enabled = False                   # --lazy: 惰性加载(用时才加载)
+_idle_timeout = 300.0                   # 空闲 N 秒后自动卸载模型(0=不卸载)
+_LOADING = False                        # 加载中标记(供 health 展示)
 
 
-@app.on_event("startup")
-def _load_model():
-    global _cosyvoice
+def _load_model_impl():
+    """真正加载模型(须持 _model_lock 调用)."""
+    global _cosyvoice, _SAMPLE_RATE
     model_dir = app.state.model_dir
-    print(f"[CosyVoice] 加载模型: {model_dir}")
+    print(f"[CosyVoice] {'惰性' if _lazy_enabled else ''}加载模型: {model_dir}")
+    t0 = time.time()
     from cosyvoice.cli.cosyvoice import AutoModel
     _cosyvoice = AutoModel(model_dir=model_dir)
     if hasattr(_cosyvoice, "eval"):  # CosyVoice2 是业务封装类，无 eval；CosyVoice3 等 nn.Module 容器可 eval
         _cosyvoice.eval()
-    global _SAMPLE_RATE
     _SAMPLE_RATE = int(getattr(_cosyvoice, "sample_rate", 22050))
-    print(f"[CosyVoice] 模型就绪, 采样率 {_SAMPLE_RATE}Hz")
+    print(f"[CosyVoice] 模型就绪(耗时 {round(time.time() - t0, 1)}s), 采样率 {_SAMPLE_RATE}Hz")
+
+
+def _ensure_loaded():
+    """确保模型已加载; 惰性模式下首次请求时自动加载(阻塞至完成)."""
+    global _cosyvoice, _LOADING
+    if _cosyvoice is not None:
+        return
+    with _model_lock:
+        if _cosyvoice is None:
+            _LOADING = True
+            try:
+                _load_model_impl()
+            finally:
+                _LOADING = False
+
+
+def _unload_model():
+    """卸载模型并释放显存/内存."""
+    global _cosyvoice
+    with _model_lock:
+        if _cosyvoice is None:
+            return
+        print("[CosyVoice] 空闲超时, 卸载模型释放资源")
+        _cosyvoice = None
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        print("[CosyVoice] 模型已卸载, 显存/内存已释放")
+
+
+def _idle_monitor():
+    """后台守护线程: 周期性检查空闲时长, 超过阈值则卸载模型."""
+    while True:
+        time.sleep(10)
+        try:
+            if _cosyvoice is not None and _idle_timeout > 0 and _last_activity > 0:
+                if time.time() - _last_activity >= _idle_timeout:
+                    _unload_model()
+        except Exception:
+            traceback.print_exc()
+
+
+@app.on_event("startup")
+def _startup():
+    # 非惰性模式: 启动即加载; 惰性模式: 首次请求时才加载
+    if not _lazy_enabled:
+        _ensure_loaded()
+    # 空闲监控线程(守护)
+    threading.Thread(target=_idle_monitor, daemon=True, name="cosyvoice-idle-monitor").start()
 
 
 @app.get("/health")
 def health():
+    status = "ok" if _cosyvoice is not None else ("loading" if _LOADING else "idle")
     return {
-        "status": "ok" if _cosyvoice is not None else "loading",
+        "status": status,
         "model_loaded": _cosyvoice is not None,
         "sample_rate": _SAMPLE_RATE,
         "device": getattr(app.state, "device", "auto"),
+        "lazy": _lazy_enabled,
+        "idle_timeout": _idle_timeout,
     }
 
 
 @app.post("/tts_with_timestamps")
 def tts_with_timestamps(req: TTSRequest):
-    if _cosyvoice is None:
-        raise RuntimeError("模型尚未加载完成，请稍后重试")
+    global _last_activity
+    _ensure_loaded()  # 首次/超时后自动加载(阻塞等待, 节点端 HTTP timeout=300s)
+    _last_activity = time.time()
     t0 = time.time()
     from timestamps import synthesize_with_timestamps  # 与 server 同目录
 
@@ -166,6 +230,15 @@ def main():
         help="推理设备: auto=有 CUDA 用 GPU, 默认; cuda=强制 GPU; cpu=强制 CPU(不占显存,"
              "与 ComfyUI/H3 视频生成同机跑时推荐, 避免显存冲突)",
     )
+    parser.add_argument(
+        "--lazy", action="store_true", default=False,
+        help="惰性加载: 服务常驻但启动时不加载模型, 首次合成请求时才加载; "
+             "空闲超时后自动卸载释放显存/内存",
+    )
+    parser.add_argument(
+        "--idle_timeout", type=float, default=300.0,
+        help="空闲自动卸载阈值(秒), 默认 300(5 分钟); 0=空闲不卸载",
+    )
     args = parser.parse_args()
 
     src = args.cosyvoice_dir or _COSYVOICE_SRC_HINT
@@ -186,6 +259,11 @@ def main():
 
     app.state.device = args.device
     app.state.model_dir = os.path.abspath(args.model_dir)
+    global _lazy_enabled, _idle_timeout
+    _lazy_enabled = bool(args.lazy)
+    _idle_timeout = float(args.idle_timeout)
+    if _lazy_enabled:
+        print(f"[CosyVoice] --lazy: 惰性加载已启用, 空闲 {_idle_timeout:.0f}s 自动卸载模型")
     uvicorn.run(app, host=args.host, port=args.port)
 
 

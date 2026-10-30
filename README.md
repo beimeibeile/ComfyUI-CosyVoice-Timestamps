@@ -76,8 +76,6 @@ modelscope download --model iic/CosyVoice2-0.5B --local_dir models\CosyVoice2-0.
 
 ### 第 2 步：启动服务
 
-
-
 ```
 # 在仓库根目录执行
 conda activate cosyvoice
@@ -85,6 +83,24 @@ python server/tts_server.py --model_dir models/CosyVoice2-0.5B --port 8000 --cos
 # 看到 "[CosyVoice] 模型就绪" 即成功；健康检查: http://127.0.0.1:8000/health
 # 若 8000 端口被其他服务占用：换用 --port 8001（或任意空闲端口），并把节点参数 server_url 同步改为 http://127.0.0.1:8001
 ```
+
+**资源优化参数（与 ComfyUI/H3 视频生成同机时推荐）**：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--device cpu` | 强制 CPU 推理，不占 GPU 显存（显存全留给 ComfyUI/H3） |
+| `--lazy` | **惰性加载**：服务常驻但启动时不加载模型，首次合成请求时才加载 |
+| `--idle_timeout N` | 空闲 N 秒后自动卸载模型释放内存/显存（默认 300=5 分钟；0=不卸载） |
+
+示例（推荐组合）：
+
+```
+python server/tts_server.py --model_dir models/CosyVoice2-0.5B --port 8000 --cosyvoice_dir <源码路径> --device cpu --lazy --idle_timeout 300
+```
+
+行为说明：服务进程常驻（端口不变，ComfyUI 节点无需改动）；`/health` 在模型未加载时返回
+`"status":"idle"`；首次合成请求自动加载模型（CPU 约 50s / GPU 约 20-40s，节点 HTTP 超时 300s 足够），
+空闲超过 `idle_timeout` 秒后自动卸载（GPU 模式释放显存，CPU 模式释放约 2GB 内存）。
 
 ### 第 3 步：安装 ComfyUI 节点
 
