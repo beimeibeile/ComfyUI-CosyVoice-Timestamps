@@ -1,7 +1,8 @@
 // CosyVoice-CosyVoice-Timestamps 前端扩展:
 // 1) 自动/手动从服务端 GET /spks 同步 sft 说话人下拉列表;
-// 2) 注册/删除说话人节点执行后, 自动刷新所有 TTS 主节点的下拉(无需手动点按钮);
-// 3) 更新 options 后强制 setDirtyCanvas 重绘(仅改 options 不触发 ComboWidget 重绘是此前的 bug)。
+// 2) 注册/删除说话人节点执行后, 自动刷新所有 TTS 主节点的下拉;
+// 3) 关键: ComfyUI 0.34 的 ComboWidget.options 是对象 {values, advanced, hidden},
+//    不是数组——必须整体赋值对象结构, 并 setDirtyCanvas 强制重绘。
 import { app } from "../../../scripts/app.js";
 
 const TTS_CLASS = "CosyVoiceTTSWithTimestamps";
@@ -16,14 +17,17 @@ const refreshSpks = async (node) => {
         const resp = await fetch(base + "/spks");
         const data = await resp.json();
         if (!data.ok || !Array.isArray(data.available_spks)) return;
-        const opts = data.available_spks.map((v) => ({ value: v, text: v }));
         const cur = spkW.value;
-        spkW.options = opts;
+        // ComfyUI 0.34 ComboWidget: options 必须是 {values, advanced, hidden} 对象
+        spkW.options = {
+            values: data.available_spks,
+            advanced: false,
+            hidden: false,
+        };
         if (!data.available_spks.includes(cur)) {
             spkW.value = data.available_spks.length ? data.available_spks[0] : "";
             if (typeof spkW.callback === "function") spkW.callback(spkW.value);
         }
-        // 关键: 强制画布重绘, 让 ComboWidget 按新 options 渲染(否则下拉仍显示旧列表)
         if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
     } catch (e) {
         // 服务未启动/未加载时保持现状, 不打扰用户
@@ -39,6 +43,15 @@ const refreshAll = () => {
 
 app.registerExtension({
     name: "CosyVoice.SpkRefresh",
+    setup() {
+        // 兜底: 新节点加入图(含从工作流 JSON 加载)时自动刷新所有主节点下拉
+        setTimeout(() => {
+            if (app.graph) {
+                app.graph.addEventListener("nodeAdded", () => setTimeout(refreshAll, 300));
+                refreshAll();
+            }
+        }, 1200);
+    },
     beforeRegisterNodeDef(nodeType, nodeData) {
         // Register/Delete 执行后自动同步所有主节点下拉
         if (nodeData.name === "CosyVoiceRegisterSpeaker" || nodeData.name === "CosyVoiceDeleteSpeaker") {
