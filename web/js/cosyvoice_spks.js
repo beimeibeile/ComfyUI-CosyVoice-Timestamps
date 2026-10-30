@@ -8,7 +8,7 @@ import { app } from "../../../scripts/app.js";
 
 const TTS_CLASS = "CosyVoiceTTSWithTimestamps";
 
-const refreshSpks = async (node) => {
+const refreshSpks = async (node, attempt = 0) => {
     if (!node || !node.widgets) return;
     const urlW = node.widgets.find((w) => w.name === "server_url");
     const spkW = node.widgets.find((w) => w.name === "sft_spk");
@@ -32,7 +32,10 @@ const refreshSpks = async (node) => {
         }
         if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
     } catch (e) {
-        // 服务未启动/未加载时保持现状, 不打扰用户
+        // 页面加载早期 graph/网络未就绪时重试几次, 不打扰用户
+        if (attempt < 3) {
+            setTimeout(() => refreshSpks(node, attempt + 1), 1500);
+        }
     }
 };
 
@@ -60,12 +63,15 @@ const ensureButtons = () => {
 app.registerExtension({
     name: "CosyVoice.SpkRefresh",
     setup() {
-        setTimeout(() => {
-            if (!app.graph) return;
-            app.graph.addEventListener("nodeAdded", () => setTimeout(refreshAll, 300));
-            ensureButtons();
-            refreshAll();
-        }, 1200);
+        // 多次触发兜底(页面加载早期 graph 未就绪/网络未稳时也能同步)
+        [1200, 3500, 7000].forEach((ms) => {
+            setTimeout(() => {
+                if (!app.graph) return;
+                app.graph.addEventListener("nodeAdded", () => setTimeout(refreshAll, 300));
+                ensureButtons();
+                refreshAll();
+            }, ms);
+        });
     },
     beforeRegisterNodeDef(nodeType, nodeData) {
         // Register/Delete 执行后自动同步所有主节点下拉
