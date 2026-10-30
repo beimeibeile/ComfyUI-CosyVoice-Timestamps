@@ -280,15 +280,29 @@ def _inference_kwargs(cosyvoice, voice, sentence, prompt_wav, prompt_text, sft_s
         pass  # 部分版本通过环境变量/构造参数设置 seed，构造层已处理
     if voice == "sft":
         spk = sft_spk or "中文男"
+        spk2info = getattr(getattr(cosyvoice, "frontend", None), "spk2info", None)
+        if not spk2info:
+            raise ValueError(
+                "sft 模式不可用: 当前模型(CosyVoice2-0.5B 官方)未带说话人库(spk2info.pt 缺失)。"
+                "请先用 POST /register_spk 注册说话人(如 {spk_id: 中文男, prompt_wav: 参考音频, prompt_text: 对应文本}),"
+                "注册后写入模型目录 spk2info.pt, sft 即可使用; 或改用 zero_shot/instruct 模式。"
+            )
+        if spk not in spk2info:
+            raise ValueError(
+                f"sft 说话人 '{spk}' 不在说话人库中, 可用: {list(spk2info.keys())}。"
+                "如未注册请先 POST /register_spk 注册。"
+            )
         base["tts_text"] = sentence
         base["spk_id"] = spk
         return base
     if voice == "instruct":
+        # CosyVoice2.inference_instruct2(tts_text, instruct_text, prompt_wav, ...): 参考音色+指令,
+        # 不接受 prompt_text(参考文本), 且必须提供 prompt_wav.
+        if not prompt_wav:
+            raise ValueError("instruct 模式必须提供 prompt_wav 参考音频路径(指令控制基于参考音色)")
         base["tts_text"] = sentence
         base["instruct_text"] = instruct_text or "请用自然的中文朗读。"
-        if prompt_wav:
-            base["prompt_text"] = prompt_text or ""
-            base["prompt_wav"] = prompt_wav
+        base["prompt_wav"] = prompt_wav
         return base
     # zero_shot
     if not prompt_wav:

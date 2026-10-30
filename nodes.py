@@ -28,9 +28,9 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 
-def _post_json(server_url, payload, timeout=300):
+def _post_json(server_url, payload, timeout=300, path="/tts_with_timestamps"):
     """向 CosyVoice 服务发送 JSON 请求并返回响应字典."""
-    url = server_url.rstrip("/") + "/tts_with_timestamps"
+    url = server_url.rstrip("/") + path
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         url, data=data,
@@ -270,5 +270,46 @@ class CosyVoiceSRTFileWriter:
 
 NODE_CLASS_MAPPINGS["CosyVoiceSRTFileWriter"] = CosyVoiceSRTFileWriter
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceSRTFileWriter"] = "CosyVoice SRT File Writer"
+
+
+class CosyVoiceRegisterSpeaker:
+    """把一段参考音频注册为 sft 预置说话人(服务端 POST /register_spk, 持久化到模型 spk2info.pt).
+
+    注册一次后, CosyVoiceTTSWithTimestamps 节点 voice=sft + sft_spk=<刚注册的 id> 即可直接使用.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "spk_id": ("STRING", {"default": "中文男", "tooltip": "要注册的说话人 ID(如 中文男/主播小张/旁白老王)"}),
+                "prompt_wav": ("STRING", {"default": "", "tooltip": "参考音频绝对路径(服务端可访问, 如 D:/voices/ref.wav)"}),
+            },
+            "optional": {
+                "prompt_text": ("STRING", {"default": "", "tooltip": "参考音频对应文字(可留空)"}),
+                "server_url": ("STRING", {"default": "http://127.0.0.1:8000"}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("RESULT", "AVAILABLE_SPKS")
+    FUNCTION = "register"
+    CATEGORY = "TTS/CosyVoice"
+
+    def register(self, spk_id, prompt_wav, prompt_text="", server_url="http://127.0.0.1:8000"):
+        if not spk_id.strip():
+            raise ValueError("[CosyVoice] spk_id 不能为空")
+        if not prompt_wav or not prompt_wav.strip():
+            raise ValueError("[CosyVoice] 请提供参考音频绝对路径 prompt_wav")
+        payload = {"spk_id": spk_id, "prompt_wav": prompt_wav, "prompt_text": prompt_text or ""}
+        result = _post_json(server_url, payload, path="/register_spk")
+        if not result.get("ok"):
+            raise RuntimeError(f"[CosyVoice] 注册失败: {result.get('error', '未知错误')}")
+        spks = ", ".join(result.get("available_spks") or [])
+        return (f"OK: 已注册说话人 '{spk_id}', 持久化到 spk2info.pt", spks)
+
+
+NODE_CLASS_MAPPINGS["CosyVoiceRegisterSpeaker"] = CosyVoiceRegisterSpeaker
+NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceRegisterSpeaker"] = "CosyVoice Register Speaker"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

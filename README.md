@@ -113,7 +113,13 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 # 或直接把本项目目录拷贝为 custom_nodes/ComfyUI-CosyVoice-Timestamps
 ```
 
-重启 ComfyUI，节点位于 `TTS/CosyVoice`**&#x20;→&#x20;**`CosyVoice TTS With Timestamps`。
+重启 ComfyUI，节点位于 `TTS/CosyVoice` → 包含三个节点：
+
+* **`CosyVoice TTS With Timestamps`**：主合成节点（AUDIO + 字级/句级时间戳 + SRT + 时长）
+* **`CosyVoice SRT File Writer`**：把 SRT 落盘为 `.srt` 字幕文件（H3 短剧/口播闭环）
+* **`CosyVoice Register Speaker`**：把一段参考音频注册为 sft 预置说话人（填 `spk_id` + 参考音频路径，执行一次即写入模型目录 `spk2info.pt`，长期有效）
+
+sft 使用流程：先用 `CosyVoice Register Speaker` 注册（如 `spk_id=中文男`，参考音频用周鸿祎.mp3），再在主节点 `voice=sft`、`sft_spk=中文男` 合成。
 
 ## 节点参数
 
@@ -123,7 +129,7 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `tts_text`      | 待合成文本（自动分句，多行也可）                                                                                                                                             |
 | `server_url`    | CosyVoice 服务地址，默认 `http://127.0.0.1:8000`                                                                                                                    |
-| `voice`         | `zero_shot`（参考音频克隆，默认）/ `instruct`（指令控制）/ `sft`（预置音色）。注意：CosyVoice2-0.5B 官方模型不含 sft 说话人库（spk2info），sft 会报 KeyError，默认请用 zero\_shot；sft 需另行准备说话人 embedding 资源 |
+| `voice`         | `zero_shot`（参考音频克隆，默认）/ `instruct`（参考音色+指令控制）/ `sft`（预置说话人）。**instruct** 需填 `prompt_wav`（参考音色）+ `instruct_text`（指令），`prompt_text` 不参与（CosyVoice2.inference_instruct2 签名）；**sft** 需先用 `CosyVoice Register Speaker` 节点（或 `POST /register_spk`）把一段参考音频注册为说话人，注册会生成与模型同源的 embedding 并持久化到模型目录 `spk2info.pt`，之后 `sft_spk` 直接填注册的 ID 即可 |
 | `prompt_wav`    | zero\_shot 参考音频路径（服务端可访问的绝对路径；可先用 CosyVoice 源码自带的 `models/_cosyvoice_src/asset/zero_shot_prompt.wav` 验证） |
 | `prompt_text`   | 参考音频对应文字                                                                                                                                                     |
 | `sft_spk`       | sft 预置说话人（如 `中文男`/`中文女`）                                                                                                                                     |

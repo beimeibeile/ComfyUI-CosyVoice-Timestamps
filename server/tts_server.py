@@ -246,6 +246,48 @@ def tts_with_timestamps(req: TTSRequest):
         }
 
 
+class RegisterSpkRequest(BaseModel):
+    spk_id: str
+    prompt_wav: str
+    prompt_text: str = ""
+
+
+@app.post("/register_spk")
+def register_spk(req: RegisterSpkRequest):
+    """把一段参考音频注册为 sft 预置说话人, 写入模型目录 spk2info.pt(持久化).
+
+    注册后 sft 模式即可用 sft_spk=spk_id 调用; 说话人 embedding 由当前模型前端生成,
+    与 CosyVoice2 完全同源(比直接引用其它模型的 spk2info.pt 兼容).
+    """
+    global _last_activity
+    try:
+        _ensure_loaded()
+        _last_activity = time.time()
+        spk_id = (req.spk_id or "").strip()
+        if not spk_id:
+            return {"ok": False, "error": "spk_id 不能为空"}
+        if not req.prompt_wav or not os.path.isfile(req.prompt_wav):
+            return {"ok": False, "error": f"参考音频不存在: {req.prompt_wav}"}
+        if not hasattr(_cosyvoice, "frontend") or not hasattr(_cosyvoice.frontend, "spk2info"):
+            return {"ok": False, "error": "当前模型前端不支持注册说话人(spk2info)"}
+
+        # 生成与当前模型完全同源的说话人 embedding(与 zero_shot 同一条前端提取链路)。
+        # 注意: 不能用官方 add_zero_shot_spk——它存入的 key 是 llm_embedding/flow_embedding,
+        # 而 frontend_sft 读取的是 spk2info[spk_id]['embedding'], 结构不匹配(CosyVoice2 官方 sft 未启用)。
+        model_input = _cosyvoice.frontend.frontend_zero_shot(
+            '', req.prompt_text or '', req.prompt_wav, _cosyvoice.sample_rate, ''
+        )
+        embedding = model_input['llm_embedding']  # 说话人 embedding(CosyVoice2 的 llm/flow 共用)
+        _cosyvoice.frontend.spk2info[spk_id] = {'embedding': embedding}
+        _cosyvoice.save_spkinfo()  # 写入 {model_dir}/spk2info.pt, 重启后仍可用
+        spks = list(_cosyvoice.frontend.spk2info.keys())
+        return {"ok": True, "spk_id": spk_id, "available_spks": spks,
+                "note": "已持久化到模型目录 spk2info.pt, 重启服务后 sft 仍可用"}
+    except Exception as e:
+        traceback.print_exc()
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 def _save_wav(buf: io.BytesIO, audio: np.ndarray, sample_rate: int) -> None:
     """用标准库写 WAV(16-bit PCM), 避免依赖 torchaudio/scipy."""
     import wave
