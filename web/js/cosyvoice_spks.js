@@ -18,12 +18,8 @@ const refreshSpks = async (node) => {
         const data = await resp.json();
         if (!data.ok || !Array.isArray(data.available_spks)) return;
         const cur = spkW.value;
-        // ComfyUI 0.34 ComboWidget: options 必须是 {values, advanced, hidden} 对象
-        spkW.options = {
-            values: data.available_spks,
-            advanced: false,
-            hidden: false,
-        };
+        // ComfyUI 0.34 ComboWidget: 只能改 options.values(实测整体替换 options 对象无效)
+        spkW.options.values = data.available_spks;
         if (!data.available_spks.includes(cur)) {
             spkW.value = data.available_spks.length ? data.available_spks[0] : "";
             if (typeof spkW.callback === "function") spkW.callback(spkW.value);
