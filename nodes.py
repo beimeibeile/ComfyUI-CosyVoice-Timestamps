@@ -17,6 +17,7 @@ ComfyUI-CosyVoice-Timestamps: CosyVoice 同源字级时间戳 TTS 客户端节�
 """
 import base64
 import json
+import time
 import urllib.request
 import urllib.error
 
@@ -26,6 +27,30 @@ import numpy as np
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
+
+# sft 说话人列表缓存(短 TTL, 避免每次构建 widget 都阻塞网络)
+_SPKS_CACHE = {"ts": 0.0, "data": None}
+_SPKS_TTL = 5.0  # 秒
+
+
+def _fetch_available_spks(server_url="http://127.0.0.1:8000"):
+    """同步拉取服务端可用说话人列表(带 5s 缓存); 服务未启动/异常返回 None."""
+    now = time.time()
+    if now - _SPKS_CACHE["ts"] < _SPKS_TTL:
+        return _SPKS_CACHE["data"]
+    try:
+        url = server_url.rstrip("/") + "/spks"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        spks = None
+        if data.get("ok") and isinstance(data.get("available_spks"), list):
+            spks = [s for s in data["available_spks"] if isinstance(s, str) and s.strip()]
+        _SPKS_CACHE.update({"ts": now, "data": spks})
+        return spks
+    except Exception:
+        _SPKS_CACHE.update({"ts": now, "data": None})
+        return None
 
 
 def _post_json(server_url, payload, timeout=300, path="/tts_with_timestamps"):
@@ -84,6 +109,12 @@ class CosyVoiceTTSWithTimestamps:
 
     @classmethod
     def INPUT_TYPES(cls):
+        # sft_spk 选项与默认值直接从服务端 /spks 拉取(启动/注册节点时即拿到真实列表),
+        # 服务未启动时兜底为内置默认; 运行中注册/删除后由前端 JS 再同步.
+        spks = _fetch_available_spks()
+        if not spks:
+            spks = ["中文男"]
+        sft_spk_default = spks[0]
         return {
             "required": {
                 "tts_text": (
@@ -106,11 +137,11 @@ class CosyVoiceTTSWithTimestamps:
                     {"default": "", "tooltip": "参考音频对应的文字内容"},
                 ),
                 "sft_spk": (
-                    ["中文男"],
+                    spks,
                     {
-                        "default": "中文男",
-                        "tooltip": "sft 预置说话人(可用列表以服务端 spk2info.pt 为准)。"
-                                   "用 CosyVoice Register Speaker 注册/Delete 删除后, 点节点上『刷新说话人列表』按钮同步",
+                        "default": sft_spk_default,
+                        "tooltip": "sft 预置说话人(选项/默认值自动取自服务端 /spks 真实列表)。"
+                                   "用 CosyVoice Register Speaker 注册/Delete 删除后自动同步; 服务未启动时显示内置默认",
                     },
                 ),
                 "instruct_text": (
