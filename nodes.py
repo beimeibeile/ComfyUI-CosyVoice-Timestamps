@@ -130,7 +130,8 @@ class CosyVoiceTTSWithTimestamps:
             "optional": {
                 "prompt_wav": (
                     "STRING",
-                    {"default": "", "tooltip": "零样本克隆的参考音频路径（服务端机器可访问的绝对路径，如 D:/voices/ref.wav）"},
+                    {"default": "", "tooltip": "zero_shot/instruct 的参考音频路径(服务端可访问绝对路径)。"
+                                               "instruct 模式可留空, 改用 sft_spk 指定已注册预置音色做参考"},
                 ),
                 "prompt_text": (
                     "STRING",
@@ -146,7 +147,7 @@ class CosyVoiceTTSWithTimestamps:
                 ),
                 "instruct_text": (
                     "STRING",
-                    {"default": "", "tooltip": "voice=instruct 时的指令（如：请用广东话表达。）"},
+                    {"default": "", "tooltip": "voice=instruct 时的指令(如：请用四川话表达。)；参考音色来自 prompt_wav 或 sft_spk 预置音色"},
                 ),
                 "language": ("STRING", {"default": "中文"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2147483647}),

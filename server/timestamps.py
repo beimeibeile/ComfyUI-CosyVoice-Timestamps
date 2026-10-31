@@ -20,6 +20,7 @@ CosyVoice 本次合成的同一个音频流 —— 句级时间戳为流式合�
 """
 from __future__ import annotations
 
+import os
 import re
 
 import numpy as np
@@ -298,8 +299,24 @@ def _inference_kwargs(cosyvoice, voice, sentence, prompt_wav, prompt_text, sft_s
     if voice == "instruct":
         # CosyVoice2.inference_instruct2(tts_text, instruct_text, prompt_wav, ...): 参考音色+指令,
         # 不接受 prompt_text(参考文本), 且必须提供 prompt_wav.
+        # 参考音色二选一: 1) prompt_wav 直接给参考音频路径; 2) 留空 + sft_spk 指定已注册预置音色
+        # (注册时已把参考音频转存 16k, 此处自动复用其路径, 无需再传 prompt_wav)。
         if not prompt_wav:
-            raise ValueError("instruct 模式必须提供 prompt_wav 参考音频路径(指令控制基于参考音色)")
+            spk = (sft_spk or "").strip()
+            spk2info = getattr(getattr(cosyvoice, "frontend", None), "spk2info", None)
+            if not spk or not spk2info or spk not in spk2info:
+                raise ValueError(
+                    "instruct 模式需要参考音色: 请提供 prompt_wav 参考音频路径, "
+                    "或指定 sft_spk 预置音色(需先经 CosyVoice Register Speaker 注册)"
+                )
+            info = spk2info[spk]
+            ref_wav = info.get("ref_wav") if isinstance(info, dict) else None
+            if not ref_wav or not os.path.isfile(ref_wav):
+                raise ValueError(
+                    f"instruct 模式: 预置音色 '{spk}' 未保存参考音频(旧版本注册缺少 16k 参考)。"
+                    f"请用 Register Speaker overwrite=true 重新注册该音色后再用"
+                )
+            prompt_wav = ref_wav
         base["tts_text"] = sentence
         base["instruct_text"] = instruct_text or "请用自然的中文朗读。"
         base["prompt_wav"] = prompt_wav

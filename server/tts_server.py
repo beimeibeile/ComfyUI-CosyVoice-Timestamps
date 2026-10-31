@@ -290,6 +290,13 @@ def delete_spk(req: DeleteSpkRequest):
         spk2info = torch.load(path, map_location="cpu", weights_only=True)
         if spk_id not in spk2info:
             return {"ok": False, "error": f"说话人 '{spk_id}' 不存在, 当前可用: {list(spk2info.keys())}"}
+        # 删除该说话人转存的参考音频(若有)
+        ref_wav = spk2info[spk_id].get("ref_wav") if isinstance(spk2info[spk_id], dict) else None
+        if ref_wav and os.path.isfile(ref_wav):
+            try:
+                os.remove(ref_wav)
+            except OSError:
+                pass
         del spk2info[spk_id]
         torch.save(spk2info, path)
         # 若模型已加载, 同步内存中的 spk2info, 避免与磁盘不一致
@@ -336,11 +343,31 @@ def register_spk(req: RegisterSpkRequest):
             '', req.prompt_text or '', req.prompt_wav, _cosyvoice.sample_rate, ''
         )
         embedding = model_input['llm_embedding']  # 说话人 embedding(CosyVoice2 的 llm/flow 共用)
-        _cosyvoice.frontend.spk2info[spk_id] = {'embedding': embedding}
+
+        # 转存 16k 参考音频到模型目录 spk_refs/: 供 instruct 模式复用预置音色做参考
+        # (instruct 仍需 prompt_speech 特征, 但参考音频本身来自已注册音色, 无需每次上传 prompt_wav)。
+        import re
+        ref_dir = os.path.join(app.state.model_dir, "spk_refs")
+        os.makedirs(ref_dir, exist_ok=True)
+        safe_id = re.sub(r'[\\/:*?"<>|\s]+', "_", spk_id)
+        ref_path = os.path.join(ref_dir, f"{safe_id}.wav")
+        try:
+            from cosyvoice.utils.file_utils import load_wav
+            ref_16k = load_wav(req.prompt_wav, 16000)
+            ref_np = ref_16k.squeeze(0).detach().cpu().numpy().astype(np.float32)
+            ref_io = io.BytesIO()
+            _save_wav(ref_io, ref_np, 16000)
+            with open(ref_path, "wb") as f:
+                f.write(ref_io.getvalue())
+        except Exception as e:
+            return {"ok": False, "error": f"参考音频转存 16k 失败(不影响 sft 注册): {type(e).__name__}: {e}"}
+
+        _cosyvoice.frontend.spk2info[spk_id] = {'embedding': embedding, 'ref_wav': ref_path}
         _cosyvoice.save_spkinfo()  # 写入 {model_dir}/spk2info.pt, 重启后仍可用
         spks = list(_cosyvoice.frontend.spk2info.keys())
         return {"ok": True, "spk_id": spk_id, "available_spks": spks,
-                "note": "已持久化到模型目录 spk2info.pt, 重启服务后 sft 仍可用"}
+                "note": "已持久化到模型目录 spk2info.pt, 重启服务后 sft 仍可用; "
+                        "已保存 16k 参考音频, instruct 模式可直接用 sft_spk 预置音色做参考"}
     except Exception as e:
         traceback.print_exc()
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
