@@ -269,7 +269,7 @@ class CosyVoiceTTSWithTimestamps:
     RETURN_TYPES = ("AUDIO", "STRING", "STRING", "FLOAT")
     RETURN_NAMES = ("AUDIO", "WORD_TIMESTAMPS", "SRT", "DURATION_SECONDS")
     FUNCTION = "generate"
-    CATEGORY = "TTS/CosyVoice"
+    CATEGORY = "DBW/CosyVoice"
 
     def generate(
         self,
@@ -329,7 +329,11 @@ class CosyVoiceTTSWithTimestamps:
         return (audio_out, json.dumps(words, ensure_ascii=False, indent=2), srt, duration)
 
 
-NODE_CLASS_MAPPINGS["CosyVoiceTTSWithTimestamps"] = CosyVoiceTTSWithTimestamps
+# 统一注册规则: DBW(系列前缀) - 工程包(CosyVoice) - 节点
+# 主注册名带前缀; 旧类名保留为兼容别名, 已保存工作流不受影响
+NODE_CLASS_MAPPINGS["DBW-CosyVoice-TTSWithTimestamps"] = CosyVoiceTTSWithTimestamps
+NODE_CLASS_MAPPINGS["CosyVoiceTTSWithTimestamps"] = CosyVoiceTTSWithTimestamps  # 兼容旧工作流
+NODE_DISPLAY_NAME_MAPPINGS["DBW-CosyVoice-TTSWithTimestamps"] = "CosyVoice TTS With Timestamps"
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceTTSWithTimestamps"] = "CosyVoice TTS With Timestamps"
 
 
@@ -364,7 +368,7 @@ class CosyVoiceSRTFileWriter:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("FILE_PATH", "SRT")
     FUNCTION = "write"
-    CATEGORY = "TTS/CosyVoice"
+    CATEGORY = "DBW/CosyVoice"
 
     def write(self, srt, filename_prefix="srt/cosyvoice", unique_id=None, prompt=None, extra_pnginfo=None):
         srt = srt or ""
@@ -406,7 +410,9 @@ class CosyVoiceSRTFileWriter:
         return (path, srt)
 
 
-NODE_CLASS_MAPPINGS["CosyVoiceSRTFileWriter"] = CosyVoiceSRTFileWriter
+NODE_CLASS_MAPPINGS["DBW-CosyVoice-SRTFileWriter"] = CosyVoiceSRTFileWriter
+NODE_CLASS_MAPPINGS["CosyVoiceSRTFileWriter"] = CosyVoiceSRTFileWriter  # 兼容旧工作流
+NODE_DISPLAY_NAME_MAPPINGS["DBW-CosyVoice-SRTFileWriter"] = "CosyVoice SRT File Writer"
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceSRTFileWriter"] = "CosyVoice SRT File Writer"
 
 
@@ -436,7 +442,7 @@ class CosyVoiceRegisterSpeaker:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("RESULT", "AVAILABLE_SPKS")
     FUNCTION = "register"
-    CATEGORY = "TTS/CosyVoice"
+    CATEGORY = "DBW/CosyVoice"
 
     def register(self, spk_id, prompt_wav, prompt_text="", overwrite=False, server_url="http://127.0.0.1:8000"):
         if not spk_id.strip():
@@ -472,7 +478,7 @@ class CosyVoiceDeleteSpeaker:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("RESULT", "AVAILABLE_SPKS")
     FUNCTION = "delete"
-    CATEGORY = "TTS/CosyVoice"
+    CATEGORY = "DBW/CosyVoice"
 
     def delete(self, spk_id, server_url="http://127.0.0.1:8000"):
         if not spk_id.strip():
@@ -484,10 +490,14 @@ class CosyVoiceDeleteSpeaker:
         return (f"OK: 已删除说话人 '{spk_id}'", spks)
 
 
-NODE_CLASS_MAPPINGS["CosyVoiceRegisterSpeaker"] = CosyVoiceRegisterSpeaker
+NODE_CLASS_MAPPINGS["DBW-CosyVoice-RegisterSpeaker"] = CosyVoiceRegisterSpeaker
+NODE_CLASS_MAPPINGS["CosyVoiceRegisterSpeaker"] = CosyVoiceRegisterSpeaker  # 兼容旧工作流
+NODE_DISPLAY_NAME_MAPPINGS["DBW-CosyVoice-RegisterSpeaker"] = "CosyVoice Register Speaker"
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceRegisterSpeaker"] = "CosyVoice Register Speaker"
 
-NODE_CLASS_MAPPINGS["CosyVoiceDeleteSpeaker"] = CosyVoiceDeleteSpeaker
+NODE_CLASS_MAPPINGS["DBW-CosyVoice-DeleteSpeaker"] = CosyVoiceDeleteSpeaker
+NODE_CLASS_MAPPINGS["CosyVoiceDeleteSpeaker"] = CosyVoiceDeleteSpeaker  # 兼容旧工作流
+NODE_DISPLAY_NAME_MAPPINGS["DBW-CosyVoice-DeleteSpeaker"] = "CosyVoice Delete Speaker"
 NODE_DISPLAY_NAME_MAPPINGS["CosyVoiceDeleteSpeaker"] = "CosyVoice Delete Speaker"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

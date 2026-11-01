@@ -5,6 +5,18 @@ CosyVoice 本地 TTS + **同源字级时间戳**（source-aligned word-level tim
 > **同源**
 > ：时间戳直接取自 CosyVoice 本次合成的同一个音频流（句级为流式合成真实音频边界，字级为同源派生 + VAD 停顿校正），而非事后用 ASR / 强制对齐测量。适合需要 "逐词时间边界" 驱动下游时序的工作流（如 MiniMax H3 短剧对话时序、字幕、口型同步）。
 
+## 节点统一注册规则（DBW 系列）
+
+本工程隶属于「ComfyUI 扩展工程（节点开发）」总仓（根目录 `D:\DobaoWork_Project\ComfyUI-Nodes\`），所有子工程节点遵循统一注册规则：
+
+```
+DBW(系列前缀) - <工程包> - <节点>         如 DBW-CosyVoice-TTSWithTimestamps
+```
+
+- 前缀 `DBW`（Doubao Work Nodes 系列）统一标识本工程系列，避免与其他作者节点冲突；
+- 旧类名（如 `CosyVoiceTTSWithTimestamps`）保留为**兼容别名**，已保存工作流无需改动即可加载；
+- 节点面板分类统一为 `DBW/<工程包>`（本工程为 `DBW/CosyVoice`）。
+
 ## 架构
 
 
@@ -12,7 +24,7 @@ CosyVoice 本地 TTS + **同源字级时间戳**（source-aligned word-level tim
 ```
 ┌────────────────────────────── ComfyUI ──────────────────────────────┐
 │  custom_nodes/ComfyUI-CosyVoice-Timestamps/                         │
-│    nodes.py  CosyVoiceTTSWithTimestamps 节点（轻量 HTTP 客户端）      │
+│    nodes.py  DBW-CosyVoice-TTSWithTimestamps 节点（轻量 HTTP 客户端）  │
 │      输出 AUDIO / WORD_TIMESTAMPS / SRT / DURATION_SECONDS           │
 └───────────────────────────────┬────────────────────────────────────┘
                                 │ HTTP/JSON (127.0.0.1:8000)
@@ -33,7 +45,7 @@ CosyVoice 本地 TTS + **同源字级时间戳**（source-aligned word-level tim
 ```
 ComfyUI-CosyVoice-Timestamps/
 ├─ __init__.py              标准 custom node 入口
-├─ nodes.py                 CosyVoiceTTSWithTimestamps 节点
+├─ nodes.py                 DBW-CosyVoice-TTSWithTimestamps 节点
 ├─ requirements.txt         ComfyUI 侧（零额外依赖，仅说明）
 ├─ pyproject.toml           打包配置
 ├─ README.md                本文件

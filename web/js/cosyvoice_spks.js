@@ -11,16 +11,17 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 
-const TTS_CLASS = "CosyVoiceTTSWithTimestamps";
-const REGISTER_CLASS = "CosyVoiceRegisterSpeaker";
-const DELETE_CLASS = "CosyVoiceDeleteSpeaker";
+// 统一注册规则(DBW 前缀): 主名带前缀; 旧类名保留为兼容别名, 新旧均匹配
+const TTS_CLASSES = ["DBW-CosyVoice-TTSWithTimestamps", "CosyVoiceTTSWithTimestamps"];
+const REGISTER_CLASSES = ["DBW-CosyVoice-RegisterSpeaker", "CosyVoiceRegisterSpeaker"];
+const DELETE_CLASSES = ["DBW-CosyVoice-DeleteSpeaker", "CosyVoiceDeleteSpeaker"];
 
 /* ================= 1. sft 说话人下拉刷新 ================= */
 
 const getTTSNodes = () => {
     const graph = app.graph;
     if (!graph || !graph._nodes) return [];
-    return graph._nodes.filter((n) => n.comfyClass === TTS_CLASS);
+    return graph._nodes.filter((n) => TTS_CLASSES.includes(n.comfyClass));
 };
 
 // 拉取服务端真实列表并原地更新下拉; 服务未运行/异常时静默返回(由轮询/事件下次重试)
@@ -86,7 +87,7 @@ const MODE_DISABLED = {
 const MANAGED_WIDGETS = ["prompt_wav", "prompt_text", "sft_spk", "instruct_text"];
 
 const applyMode = (node) => {
-    if (!node || !node.widgets || node.comfyClass !== TTS_CLASS) return;
+    if (!node || !node.widgets || !TTS_CLASSES.includes(node.comfyClass)) return;
     const voiceW = node.widgets.find((w) => w.name === "voice");
     if (!voiceW) return;
     const disabledSet = new Set(MODE_DISABLED[voiceW.value] || []);
@@ -129,7 +130,7 @@ app.registerExtension({
 
     beforeRegisterNodeDef(nodeType, nodeData) {
         // Register/Delete 执行后自动同步所有主节点下拉
-        if (nodeData.name === REGISTER_CLASS || nodeData.name === DELETE_CLASS) {
+        if (REGISTER_CLASSES.includes(nodeData.name) || DELETE_CLASSES.includes(nodeData.name)) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (...args) {
                 const r = onExecuted ? onExecuted.apply(this, args) : undefined;
@@ -138,7 +139,7 @@ app.registerExtension({
             };
         }
         // 主节点: 执行后刷新 + 选中时刷新/重应用模式
-        if (nodeData.name === TTS_CLASS) {
+        if (TTS_CLASSES.includes(nodeData.name)) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (...args) {
                 const r = onExecuted ? onExecuted.apply(this, args) : undefined;
@@ -156,7 +157,7 @@ app.registerExtension({
     },
 
     nodeCreated(node) {
-        if (node.comfyClass !== TTS_CLASS) return;
+        if (!TTS_CLASSES.includes(node.comfyClass)) return;
 
         // 手动刷新按钮
         try {
