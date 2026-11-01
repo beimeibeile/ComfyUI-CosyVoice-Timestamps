@@ -17,9 +17,12 @@ ComfyUI-CosyVoice-Timestamps: CosyVoice 同源字级时间戳 TTS 客户端节�
 """
 import base64
 import json
+import os
+import re
 import time
 import urllib.request
 import urllib.error
+from datetime import datetime
 
 import torch
 import numpy as np
@@ -104,6 +107,92 @@ def _build_srt(sentences):
     return "\n".join(lines)
 
 
+# ---- 文件名占位符 -------------------------------------------------------
+_DATE_PLACEHOLDER_RE = re.compile(r"%date:([^%]+)%")
+_NODE_REF_RE = re.compile(r"%([^%]+?)\.([^%]+?)%")
+_ANY_PLACEHOLDER_RE = re.compile(r"%[^%]+%")
+# ComfyUI 日期 token → strftime token
+_DATE_TOKEN_MAP = {"yyyy": "%Y", "MM": "%m", "dd": "%d", "HH": "%H", "mm": "%M", "ss": "%S"}
+_INVALID_FS_RE = re.compile(r'[<>:"|?*\x00-\x1f]')
+
+
+def _build_title_map(extra_pnginfo) -> dict:
+    """从 extra_pnginfo.workflow.nodes 建立 {node_id(str): 节点标题}。
+
+    节点引用支持按用户在界面看到的标题匹配(标题可能被重命名),
+    无标题时回落到节点类型名。
+    """
+    titles = {}
+    try:
+        nodes = extra_pnginfo.get("workflow", {}).get("nodes", [])
+    except (AttributeError, TypeError):
+        return titles
+    for n in nodes:
+        if isinstance(n, dict) and "id" in n:
+            titles[str(n["id"])] = n.get("title") or n.get("type") or ""
+    return titles
+
+
+def _compact_name(s) -> str:
+    """去除所有空白, 用于显示名/类名的宽松等价比较。"""
+    return re.sub(r"\s+", "", str(s or ""))
+
+
+def _lookup_node_value(node_name, field, prompt, title_map):
+    """按节点类型名/显示名/标题匹配节点, 返回其字面值字段(标量)的字符串形式。
+
+    节点名支持三种等价写法:
+      - class_type(如 CosyVoiceTTSWithTimestamps, 无空格);
+      - 界面显示名(如 CosyVoice TTS With Timestamps, 带空格);
+      - 用户重命名后的标题(title)。
+    只接受字符串/数值/布尔等字面输入; 若该字段连接自其他节点(list/dict),
+    无法作为文件名, 返回 None。
+    """
+    target = (node_name or "").strip()
+    target_compact = _compact_name(target)
+    for nid, nd in (prompt or {}).items():
+        if not isinstance(nd, dict):
+            continue
+        cls = nd.get("class_type", "")
+        title = title_map.get(str(nid), "")
+        display = NODE_DISPLAY_NAME_MAPPINGS.get(cls, "")
+        names = (cls, title, display)
+        if target in names or target_compact in tuple(_compact_name(n) for n in names):
+            inputs = nd.get("inputs", {})
+            if field in inputs and isinstance(inputs[field], (str, int, float, bool)):
+                return str(inputs[field])
+    return None
+
+
+def _resolve_placeholders(prefix: str, prompt=None, extra_pnginfo=None) -> str:
+    """解析文件名前缀中的占位符(全部在 Python 端完成, 不依赖前端 JS)。
+
+    - %date:yyyyMMdd%: 日期时间(ComfyUI 风格, 支持 yyyy/MM/dd/HH/mm/ss);
+    - %节点名.字段%: 跨节点引用, 按节点类型名或界面标题匹配, 读取其字面字段
+      (如 %CosyVoice TTS With Timestamps.voice% → instruct);
+    - 无法解析的残留占位符安全移除, 避免产生非法文件名。
+    """
+    def _date_sub(m):
+        py_fmt = m.group(1)
+        for k, v in _DATE_TOKEN_MAP.items():
+            py_fmt = py_fmt.replace(k, v)
+        return datetime.now().strftime(py_fmt)
+
+    prefix = _DATE_PLACEHOLDER_RE.sub(_date_sub, prefix or "")
+    title_map = _build_title_map(extra_pnginfo)
+
+    def _node_sub(m):
+        val = _lookup_node_value(m.group(1).strip(), m.group(2).strip(), prompt, title_map)
+        return val if val is not None else ""
+
+    prefix = _NODE_REF_RE.sub(_node_sub, prefix)
+    return _ANY_PLACEHOLDER_RE.sub("", prefix)
+
+
+def _sanitize_path_part(part: str) -> str:
+    return _INVALID_FS_RE.sub("_", part).strip()
+
+
 class CosyVoiceTTSWithTimestamps:
     """CosyVoice 同源字级时间戳 TTS 主节点."""
 
@@ -149,12 +238,9 @@ class CosyVoiceTTSWithTimestamps:
                     "STRING",
                     {"default": "", "tooltip": "voice=instruct 时的指令(如：请用四川话表达。)；参考音色来自 prompt_wav 或 sft_spk 预置音色"},
                 ),
-                "language": ("STRING", {"default": "中文"}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 2147483647}),
-                "stream": ("BOOLEAN", {"default": True, "tooltip": "流式合成（推荐，时间戳更精确）"}),
-                "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 1.5, "step": 0.05}),
-                "top_p": ("FLOAT", {"default": 0.8, "min": 0.1, "max": 1.0, "step": 0.05}),
-                "speed": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.1}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 2147483647, "tooltip": "随机种子，同种子可复现（服务端在合成前对 torch/np 置种）"}),
+                "stream": ("BOOLEAN", {"default": True, "tooltip": "流式合成（推荐，时间戳更精确）。注意：speed≠1.0 时自动切换为非流式（CosyVoice 变速仅支持非流式）"}),
+                "speed": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.1, "tooltip": "语速倍率（0.5~2.0），1.0 为原速。仅非流式支持变速，变速时自动关闭流式"}),
                 "pause_ms": (
                     "INT",
                     {"default": 120, "min": 0, "max": 2000, "tooltip": "句间插入的停顿时长(ms)，避免句子粘连"},
@@ -194,11 +280,8 @@ class CosyVoiceTTSWithTimestamps:
         prompt_text="",
         sft_spk="",
         instruct_text="",
-        language="中文",
         seed=0,
         stream=True,
-        temperature=0.7,
-        top_p=0.8,
         speed=1.0,
         pause_ms=120,
         device="",
@@ -214,11 +297,8 @@ class CosyVoiceTTSWithTimestamps:
             "prompt_text": prompt_text,
             "sft_spk": sft_spk,
             "instruct_text": instruct_text,
-            "language": language,
             "seed": int(seed),
             "stream": bool(stream),
-            "temperature": float(temperature),
-            "top_p": float(top_p),
             "speed": float(speed),
             "pause_ms": int(pause_ms),
         }
@@ -269,9 +349,14 @@ class CosyVoiceSRTFileWriter:
             "optional": {
                 "filename_prefix": (
                     "STRING",
-                    {"default": "srt/cosyvoice", "tooltip": "输出文件名前缀，可带子目录（如 srt/短剧01）"},
+                    {"default": "srt/cosyvoice",
+                     "tooltip": "输出路径前缀, 支持子目录与占位符:\n"
+                                "1) %date:yyyyMMdd% 日期(还可用 MM/dd/HH/mm/ss);\n"
+                                "2) %节点名.字段% 引用其他节点参数(如 %CosyVoice TTS With Timestamps.voice%);\n"
+                                "示例: audio/TTS/cosyvoice/%date:yyyyMMdd%/%CosyVoice TTS With Timestamps.voice%_"},
                 ),
             },
+            "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
         }
 
     RETURN_TYPES = ("STRING", "STRING")
@@ -279,26 +364,41 @@ class CosyVoiceSRTFileWriter:
     FUNCTION = "write"
     CATEGORY = "TTS/CosyVoice"
 
-    def write(self, srt, filename_prefix="srt/cosyvoice"):
+    def write(self, srt, filename_prefix="srt/cosyvoice", unique_id=None, prompt=None, extra_pnginfo=None):
         srt = srt or ""
         if not srt.strip():
             return ("", srt)
         try:
-            from folder_paths import get_output_directory, get_save_image_path
-            full_output_folder, filename, counter, _subfolder, _prefix = get_save_image_path(
-                filename_prefix, get_output_directory()
-            )
+            from folder_paths import get_output_directory
+            base_dir = get_output_directory()
         except Exception:
-            # 兜底: 相对仓库根 output 目录
-            import os
-            full_output_folder = os.path.abspath(
+            # 兜底: 仓库根 output 目录
+            base_dir = os.path.abspath(
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
             )
-            filename = "cosyvoice_srt"
-            counter = 1
-            os.makedirs(full_output_folder, exist_ok=True)
-        import os
-        path = os.path.join(full_output_folder, f"{filename}_{counter:05}.srt")
+        # 解析占位符(日期+跨节点引用) → 拆目录/文件名 → 清洗非法字符 → 自动建目录
+        resolved = _resolve_placeholders(
+            filename_prefix, prompt=prompt, extra_pnginfo=extra_pnginfo
+        ).replace("\\", "/").strip("/")
+        parts = [_sanitize_path_part(p) for p in resolved.split("/") if p and p.strip()]
+        if not parts:
+            parts = ["cosyvoice"]
+        name_part = parts[-1]
+        out_dir = os.path.join(base_dir, *parts[:-1]) if parts[:-1] else base_dir
+        os.makedirs(out_dir, exist_ok=True)
+
+        # 同名自动递增序号, 不覆盖已有字幕
+        if name_part.endswith(".srt"):
+            stem, path = name_part[:-4], os.path.join(out_dir, name_part)
+            i = 1
+            while os.path.exists(path):
+                path = os.path.join(out_dir, f"{stem}_{i:05}.srt")
+                i += 1
+        else:
+            i, path = 1, os.path.join(out_dir, f"{name_part}00001.srt")
+            while os.path.exists(path):
+                path = os.path.join(out_dir, f"{name_part}{i:05}.srt")
+                i += 1
         with open(path, "w", encoding="utf-8") as f:
             f.write(srt)
         return (path, srt)

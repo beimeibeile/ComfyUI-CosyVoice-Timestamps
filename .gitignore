@@ -7,3 +7,8 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+
+# 服务运行时临时文件（PID 记录 / 日志）
+_tts_pid.txt
+_tts_out.log
+_tts_err.log

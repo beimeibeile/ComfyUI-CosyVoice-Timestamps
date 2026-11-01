@@ -267,6 +267,31 @@ def synthesize_with_timestamps(
 
 # ---- CosyVoice 版本适配 --------------------------------------------------
 
+_INSTRUCT_END_RE = re.compile(r"[。！？.…!?；;]$")
+
+
+def _normalize_instruct(text: str) -> str:
+    """规范化指令文本: 去空白并在末尾补句末标点。
+
+    根因: CosyVoice2 的 LLM 把指令文本与正文无分隔符直接拼接
+    (llm.py: torch.concat([prompt_text, text])), 指令缺少句末标点时,
+    模型无法识别指令/正文边界, 有概率把指令当正文复读(随机出现)。
+    补句号给出明确边界信号, 显著降低复读概率。
+
+    空指令直接报错: 不再硬塞"请用自然的中文朗读。"这类默认句——
+    该默认句本身会被 LLM 当输入, 存在被朗读出来的隐患。
+    """
+    text = (text or "").strip()
+    if not text:
+        raise ValueError(
+            "instruct 模式必须填写 instruct_text 指令(如：请用四川话朗读。)。"
+            "指令应只描述说话方式, 不要把要朗读的正文写进指令"
+        )
+    if not _INSTRUCT_END_RE.search(text):
+        text += "。"
+    return text
+
+
 def _inference_fn(cosyvoice, voice: str):
     if voice == "sft":
         return cosyvoice.inference_sft
@@ -276,9 +301,12 @@ def _inference_fn(cosyvoice, voice: str):
 
 
 def _inference_kwargs(cosyvoice, voice, sentence, prompt_wav, prompt_text, sft_spk, instruct_text, stream, seed, speed):
-    base = {"stream": stream}
-    if hasattr(cosyvoice, "seed") and seed is not None:
-        pass  # 部分版本通过环境变量/构造参数设置 seed，构造层已处理
+    use_speed = float(speed) if speed is not None else 1.0
+    # CosyVoice 仅在非流式模式支持变速(model.py: assert speed change only support
+    # non-stream inference mode), 故变速时自动关闭流式, 避免 AssertionError。
+    use_stream = bool(stream) and use_speed == 1.0
+    base = {"stream": use_stream, "speed": use_speed}
+    # 注: seed 由服务端 tts_server 在调用前对 torch/np 置种(manual_seed), 此处无需处理。
     if voice == "sft":
         spk = sft_spk or "中文男"
         spk2info = getattr(getattr(cosyvoice, "frontend", None), "spk2info", None)
@@ -318,7 +346,7 @@ def _inference_kwargs(cosyvoice, voice, sentence, prompt_wav, prompt_text, sft_s
                 )
             prompt_wav = ref_wav
         base["tts_text"] = sentence
-        base["instruct_text"] = instruct_text or "请用自然的中文朗读。"
+        base["instruct_text"] = _normalize_instruct(instruct_text)
         base["prompt_wav"] = prompt_wav
         return base
     # zero_shot

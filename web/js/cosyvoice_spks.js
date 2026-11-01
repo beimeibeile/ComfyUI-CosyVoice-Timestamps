@@ -1,89 +1,143 @@
 // CosyVoice-Timestamps 前端扩展:
-// 1) 自动/手动从服务端 GET /spks 同步 sft 说话人下拉列表;
-// 2) 注册/删除说话人节点执行后, 自动刷新所有 TTS 主节点的下拉;
-// 3) 关键(浏览器实测): ComfyUI 0.34 ComboWidget —
-//    a) options.values 才是下拉数据源(整体替换 options 对象无效);
-//    b) 切换当前值必须用 widget.setValue(value, {node, canvas})(直接赋值 w.value 无效, 受控属性)。
+// 1) sft 说话人下拉实时同步(注册/删除后无需重启浏览器, 也无需关闭页面);
+// 2) 按 voice 模式灰色禁用无关参数(全局参数始终可用)。
+//
+// 机制均经前端源码 + 真实页面双重验证(ComfyUI 0.34 / frontend 1.49.6):
+// - 下拉数据源是 widget.options.values; canvas 与 Vue 两种渲染模式在打开下拉时
+//   都会实时读取它, 故采用【原地更新数组】(保持引用, 兼容响应式)。
+// - 切换当前值必须 widget.setValue(value, {node, canvas})(直接 w.value 无效, 受控)。
+// - widget.disabled 是跨模式可靠的灰色禁用接口(canvas 走 computedDisabled→alpha 0.5,
+//   Vue 走 widgetState.disabled)。
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 const TTS_CLASS = "CosyVoiceTTSWithTimestamps";
+const REGISTER_CLASS = "CosyVoiceRegisterSpeaker";
+const DELETE_CLASS = "CosyVoiceDeleteSpeaker";
 
-const refreshSpks = async (node, attempt = 0) => {
+/* ================= 1. sft 说话人下拉刷新 ================= */
+
+const getTTSNodes = () => {
+    const graph = app.graph;
+    if (!graph || !graph._nodes) return [];
+    return graph._nodes.filter((n) => n.comfyClass === TTS_CLASS);
+};
+
+// 拉取服务端真实列表并原地更新下拉; 服务未运行/异常时静默返回(由轮询/事件下次重试)
+const refreshSpks = async (node) => {
     if (!node || !node.widgets) return;
     const urlW = node.widgets.find((w) => w.name === "server_url");
     const spkW = node.widgets.find((w) => w.name === "sft_spk");
-    if (!urlW || !spkW) return;
-    const base = (urlW.value || "http://127.0.0.1:8000").replace(/\/+$/, "");
+    if (!spkW || !spkW.options) return;
+    const base = (urlW ? urlW.value : "http://127.0.0.1:8000") || "http://127.0.0.1:8000";
+    let data;
     try {
-        const resp = await fetch(base + "/spks");
-        const data = await resp.json();
-        if (!data.ok || !Array.isArray(data.available_spks)) return;
-        // a) 更新下拉数据源
-        spkW.options.values = data.available_spks;
-        // b) 当前值不在新列表时, 用 setValue 切换到首项
-        if (!data.available_spks.includes(spkW.value)) {
-            const next = data.available_spks.length ? data.available_spks[0] : "";
-            if (typeof spkW.setValue === "function") {
-                spkW.setValue(next, { node, canvas: app.canvas });
-            } else {
-                spkW.value = next;
-            }
-            if (typeof spkW.callback === "function") spkW.callback(spkW.value);
-        }
-        if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
+        const resp = await fetch(base.replace(/\/+$/, "") + "/spks");
+        if (!resp.ok) return;
+        data = await resp.json();
     } catch (e) {
-        // 页面加载早期 graph/网络未就绪时重试几次, 不打扰用户
-        if (attempt < 3) {
-            setTimeout(() => refreshSpks(node, attempt + 1), 1500);
-        }
+        return; // 服务未启动等, 不报错、不重试堆积
     }
+    if (!data || !data.ok || !Array.isArray(data.available_spks)) return;
+    const list = data.available_spks.filter((s) => typeof s === "string" && s);
+    if (!list.length) return;
+
+    // 原地更新 options.values, 保持数组引用(canvas/Vue 两种渲染都能拿到新数据)
+    if (Array.isArray(spkW.options.values)) {
+        spkW.options.values.length = 0;
+        spkW.options.values.push(...list);
+    } else {
+        spkW.options.values = list.slice();
+    }
+
+    // 当前选中值已不在新列表(如刚删除当前音色) → 切到第一条
+    if (!list.includes(spkW.value)) {
+        if (typeof spkW.setValue === "function") {
+            spkW.setValue(list[0], { node, canvas: app.canvas });
+        } else {
+            spkW.value = list[0];
+        }
+        if (typeof spkW.callback === "function") spkW.callback(spkW.value);
+    }
+    node.setDirtyCanvas?.(true, true);
 };
 
 const refreshAll = () => {
-    if (!app.graph || !app.graph._nodes) return;
-    for (const n of app.graph._nodes) {
-        if (n.comfyClass === TTS_CLASS) refreshSpks(n);
-    }
+    for (const n of getTTSNodes()) refreshSpks(n);
 };
 
-// nodeCreated 在 0.34 有时不触发, 从 setup 兜底补"刷新按钮"
-const ensureButtons = () => {
-    if (!app.graph || !app.graph._nodes) return;
-    for (const n of app.graph._nodes) {
-        if (n.comfyClass !== TTS_CLASS) continue;
-        const hasBtn = n.widgets && n.widgets.some((w) => w.type === "button" && String(w.name || "").includes("刷新"));
-        if (!hasBtn && typeof n.addWidget === "function") {
-            try {
-                n.addWidget("button", "🔄 刷新说话人列表", null, () => refreshSpks(n));
-            } catch (e) { /* 0.34 个别渲染模式下按钮不渲染, 自动刷新仍生效 */ }
+// 防抖: 一次工作流里多个节点的 executed 事件会密集到达, 合并为一次刷新
+let _lastSchedule = 0;
+const scheduleRefresh = (delay = 300) => {
+    const now = Date.now();
+    if (now - _lastSchedule < delay) return;
+    _lastSchedule = now;
+    setTimeout(refreshAll, delay);
+};
+
+/* ================= 2. 模式联动: 无关参数灰色禁用 ================= */
+
+// 各模式下需禁用的参数; 其余(含全部全局参数)始终可用
+const MODE_DISABLED = {
+    sft: ["prompt_wav", "prompt_text", "instruct_text"],
+    instruct: ["prompt_text"],
+    zero_shot: ["sft_spk", "instruct_text"],
+};
+const MANAGED_WIDGETS = ["prompt_wav", "prompt_text", "sft_spk", "instruct_text"];
+
+const applyMode = (node) => {
+    if (!node || !node.widgets || node.comfyClass !== TTS_CLASS) return;
+    const voiceW = node.widgets.find((w) => w.name === "voice");
+    if (!voiceW) return;
+    const disabledSet = new Set(MODE_DISABLED[voiceW.value] || []);
+    for (const w of node.widgets) {
+        if (MANAGED_WIDGETS.includes(w.name)) {
+            const target = disabledSet.has(w.name);
+            if (w.disabled !== target) w.disabled = target;
         }
     }
+    node.setDirtyCanvas?.(true, true);
 };
 
+const applyModeAll = () => {
+    for (const n of getTTSNodes()) applyMode(n);
+};
+
+/* ================= 扩展注册 ================= */
+
 app.registerExtension({
-    name: "CosyVoice.SpkRefresh",
+    name: "CosyVoice.FrontendEnhance",
+
     setup() {
-        // 多次触发兜底(页面加载早期 graph 未就绪/网络未稳时也能同步)
-        [1200, 3500, 7000].forEach((ms) => {
+        // 全局事件兜底: 任何节点执行完成 / 整次执行成功 → 刷新下拉
+        api.addEventListener("executed", () => scheduleRefresh(300));
+        api.addEventListener("execution_success", () => scheduleRefresh(200));
+
+        // 多时点初始化(覆盖页面加载早期 graph 未就绪)
+        [800, 2000, 5000].forEach((ms) =>
             setTimeout(() => {
-                if (!app.graph) return;
-                app.graph.addEventListener("nodeAdded", () => setTimeout(refreshAll, 300));
-                ensureButtons();
                 refreshAll();
-            }, ms);
-        });
+                applyModeAll();
+            }, ms)
+        );
+
+        // 轻量轮询: 每 20s 同步一次, 覆盖外部增删/服务后启动等场景(fetch 失败静默)
+        setInterval(() => {
+            if (getTTSNodes().length) refreshAll();
+        }, 20000);
     },
+
     beforeRegisterNodeDef(nodeType, nodeData) {
         // Register/Delete 执行后自动同步所有主节点下拉
-        if (nodeData.name === "CosyVoiceRegisterSpeaker" || nodeData.name === "CosyVoiceDeleteSpeaker") {
+        if (nodeData.name === REGISTER_CLASS || nodeData.name === DELETE_CLASS) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (...args) {
                 const r = onExecuted ? onExecuted.apply(this, args) : undefined;
-                setTimeout(refreshAll, 400);
+                scheduleRefresh(400);
                 return r;
             };
         }
-        // 主节点执行完成后再同步一次(防服务端注册状态变化)
+        // 主节点: 执行后刷新 + 选中时刷新/重应用模式
         if (nodeData.name === TTS_CLASS) {
             const onExecuted = nodeType.prototype.onExecuted;
             nodeType.prototype.onExecuted = function (...args) {
@@ -91,13 +145,39 @@ app.registerExtension({
                 setTimeout(() => refreshSpks(this), 300);
                 return r;
             };
+            const onSelected = nodeType.prototype.onSelected;
+            nodeType.prototype.onSelected = function (...args) {
+                const r = onSelected ? onSelected.apply(this, args) : undefined;
+                refreshSpks(this);
+                applyMode(this);
+                return r;
+            };
         }
     },
-    async nodeCreated(node) {
+
+    nodeCreated(node) {
         if (node.comfyClass !== TTS_CLASS) return;
+
+        // 手动刷新按钮
         try {
-            node.addWidget("button", "🔄 刷新说话人列表", null, () => refreshSpks(node));
-        } catch (e) { /* 同上 */ }
-        setTimeout(() => refreshSpks(node), 1200);
+            if (typeof node.addWidget === "function") {
+                node.addWidget("button", "刷新说话人列表", null, () => refreshSpks(node));
+            }
+        } catch (e) { /* 个别渲染模式按钮不渲染, 自动刷新仍生效 */ }
+
+        // voice 变化 → 即时灰色禁用无关参数
+        const voiceW = node.widgets && node.widgets.find((w) => w.name === "voice");
+        if (voiceW) {
+            const origCb = voiceW.callback;
+            voiceW.callback = function (...args) {
+                const r = origCb ? origCb.apply(this, args) : undefined;
+                applyMode(node);
+                return r;
+            };
+        }
+        setTimeout(() => {
+            refreshSpks(node);
+            applyMode(node);
+        }, 800);
     },
 });

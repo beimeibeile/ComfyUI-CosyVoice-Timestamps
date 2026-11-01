@@ -9,11 +9,8 @@
       "prompt_text": "这是我的参考音色。",
       "sft_spk": "",
       "instruct_text": "",
-      "language": "中文",
       "seed": 42,
       "stream": true,
-      "temperature": 0.7,
-      "top_p": 0.8,
       "speed": 1.0,
       "pause_ms": 120
     }

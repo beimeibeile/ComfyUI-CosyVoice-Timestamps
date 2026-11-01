@@ -16,6 +16,8 @@ from timestamps import (
     keep_chars,
     assign_word_timestamps,
     synthesize_with_timestamps,
+    _inference_kwargs,
+    _normalize_instruct,
 )
 
 SAMPLE_RATE = 22050
@@ -34,7 +36,7 @@ class MockCosy:
     """模拟 CosyVoice: 每 0.1s 输出一个音频 chunk, 总时长 = 有效字数 * 0.2s."""
     sample_rate = SAMPLE_RATE
 
-    def inference_zero_shot(self, tts_text, prompt_text, prompt_wav, stream=True):
+    def inference_zero_shot(self, tts_text, prompt_text, prompt_wav, stream=True, speed=1.0):
         n = len(keep_chars(tts_text))
         for _ in range(max(1, n)):
             yield {"tts_speech": torch.zeros(1, SAMPLE_RATE // 10)}
@@ -94,11 +96,47 @@ def test_synthesize_with_timestamps():
     check("duration_seconds 与音频一致", abs(out["duration_seconds"] - len(audio) / sr) < 0.01)
 
 
+def test_inference_kwargs_speed():
+    print("[5] _inference_kwargs (speed/stream 联动)")
+    cosy = MockCosy()
+    common = (cosy, "zero_shot", "你好", "x.wav", "", "", "")
+    # 默认 speed=1, stream=True 保持流式
+    kw = _inference_kwargs(*common, stream=True, seed=0, speed=1.0)
+    check("默认保持流式", kw["stream"] is True and kw["speed"] == 1.0)
+    # 变速时自动关闭流式(CosyVoice 仅非流式支持变速), 且 speed 正确下发
+    kw = _inference_kwargs(*common, stream=True, seed=0, speed=1.5)
+    check("变速自动关流式", kw["stream"] is False and kw["speed"] == 1.5, str(kw))
+    # sft 分支同样带 speed
+    class _Frontend:
+        spk2info = {"中文男": {}}
+
+    class SftMock(MockCosy):
+        frontend = _Frontend()
+
+    kw = _inference_kwargs(SftMock(), "sft", "你好", "", "", "中文男", "", stream=False, seed=0, speed=0.8)
+    check("sft 带 speed", kw["speed"] == 0.8 and kw["spk_id"] == "中文男")
+
+
+def test_normalize_instruct():
+    print("[6] _normalize_instruct")
+    raised = False
+    try:
+        _normalize_instruct("   ")
+    except ValueError:
+        raised = True
+    check("空指令报错", raised)
+    check("无标点自动补句号", _normalize_instruct("请用四川话朗读") == "请用四川话朗读。")
+    check("已有标点不重复补", _normalize_instruct("请用四川话朗读。") == "请用四川话朗读。")
+    check("去首尾空白", _normalize_instruct("  请小声说  ") == "请小声说。")
+
+
 if __name__ == "__main__":
     test_split_sentences()
     test_keep_chars()
     test_assign_word_timestamps()
     test_synthesize_with_timestamps()
+    test_inference_kwargs_speed()
+    test_normalize_instruct()
     print()
     if FAIL:
         print(f"FAILED: {len(FAIL)} -> {FAIL}")

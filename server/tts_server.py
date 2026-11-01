@@ -22,10 +22,12 @@ import base64
 import gc
 import io
 import os
+import re
 import sys
 import threading
 import time
 import traceback
+from contextlib import asynccontextmanager
 
 import numpy as np
 
@@ -50,11 +52,8 @@ class TTSRequest(BaseModel):
     prompt_text: str = ""
     sft_spk: str = ""
     instruct_text: str = ""
-    language: str = "中文"
     seed: int = 0
     stream: bool = True
-    temperature: float = 0.7
-    top_p: float = 0.8
     speed: float = 1.0
     pause_ms: int = 120
     # 动态配置(空/0=不干预, 用服务端启动参数)
@@ -62,7 +61,19 @@ class TTSRequest(BaseModel):
     idle_timeout: float = 0            # 空闲卸载秒数
 
 
-app = FastAPI(title="CosyVoice TTS With Timestamps", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app):
+    # 启动: 非惰性模式启动即加载; 惰性模式首次请求时才加载
+    if not _lazy_enabled:
+        _ensure_loaded()
+    # 空闲监控线程(守护)
+    threading.Thread(target=_idle_monitor, daemon=True, name="cosyvoice-idle-monitor").start()
+    yield
+    # 关闭: 卸载模型, 释放显存/内存
+    _unload_model()
+
+
+app = FastAPI(title="CosyVoice TTS With Timestamps", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -169,15 +180,6 @@ def _idle_monitor():
                     _unload_model()
         except Exception:
             traceback.print_exc()
-
-
-@app.on_event("startup")
-def _startup():
-    # 非惰性模式: 启动即加载; 惰性模式: 首次请求时才加载
-    if not _lazy_enabled:
-        _ensure_loaded()
-    # 空闲监控线程(守护)
-    threading.Thread(target=_idle_monitor, daemon=True, name="cosyvoice-idle-monitor").start()
 
 
 @app.get("/health")
@@ -346,7 +348,6 @@ def register_spk(req: RegisterSpkRequest):
 
         # 转存 16k 参考音频到模型目录 spk_refs/: 供 instruct 模式复用预置音色做参考
         # (instruct 仍需 prompt_speech 特征, 但参考音频本身来自已注册音色, 无需每次上传 prompt_wav)。
-        import re
         ref_dir = os.path.join(app.state.model_dir, "spk_refs")
         os.makedirs(ref_dir, exist_ok=True)
         safe_id = re.sub(r'[\\/:*?"<>|\s]+', "_", spk_id)

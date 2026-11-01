@@ -18,7 +18,7 @@ CosyVoice 本地 TTS + **同源字级时间戳**（source-aligned word-level tim
                                 │ HTTP/JSON (127.0.0.1:8000)
 ┌───────────────────────────────▼────────────────────────────────────┐
 │  独立服务（Python 3.10 venv，与 ComfyUI 环境完全隔离）               │
-│  server/tts_server.py  FastAPI + WebSocket 就绪                      │
+│  server/tts_server.py  FastAPI HTTP 服务（模型加载+合成+说话人管理）   │
 │  server/timestamps.py  流式逐句合成 + 句级精确计时 + 字级分配        │
 │      └── CosyVoice2-0.5B（本地 GPU）                                │
 └─────────────────────────────────────────────────────────────────────┘
@@ -115,8 +115,11 @@ git clone <本仓库地址> ComfyUI-CosyVoice-Timestamps
 
 重启 ComfyUI，节点位于 `TTS/CosyVoice` → 包含四个节点：
 
-* **`CosyVoice TTS With Timestamps`**：主合成节点（AUDIO + 字级/句级时间戳 + SRT + 时长）。`sft_spk` 为**下拉选择**（自动读取服务端已注册说话人；注册/删除后点节点上「🔄 刷新说话人列表」按钮同步，无需重启）
-* **`CosyVoice SRT File Writer`**：把 SRT 落盘为 `.srt` 字幕文件（H3 短剧/口播闭环）
+* **`CosyVoice TTS With Timestamps`**：主合成节点（AUDIO + 字级/句级时间戳 + SRT + 时长）。`sft_spk` 为**下拉选择**（自动读取服务端已注册说话人；注册/删除后**自动实时同步**，无需重启浏览器/页面；另有「🔄 刷新说话人列表」手动按钮）。`voice` 三种模式切换时，无关参数自动**灰色禁用**（`sft` 禁用 prompt_wav/prompt_text/instruct_text；`instruct` 禁用 prompt_text；`zero_shot` 禁用 sft_spk/instruct_text；全局参数始终可用）
+* **`CosyVoice SRT File Writer`**：把 SRT 落盘为 `.srt` 字幕文件。`filename_prefix` 支持**占位符**：
+  1. `%date:yyyyMMdd%` 日期（还支持 `MM/dd/HH/mm/ss`）；
+  2. `%节点名.字段%` 跨节点引用（按节点类型名/显示名/标题匹配，读取字面值，如 `%CosyVoice TTS With Timestamps.voice%`、`%...sft_spk%`）；
+  3. 无法解析的残留占位符自动移除，避免非法文件名。示例：`audio/TTS/cosyvoice/%date:yyyyMMdd%/%CosyVoice TTS With Timestamps.voice%_%CosyVoice TTS With Timestamps.sft_spk%_`
 * **`CosyVoice Register Speaker`**：把一段参考音频注册为 sft 预置说话人（`overwrite=false` 时重名会拒绝并提示，防止误覆盖；`overwrite=true` 才允许用新音频覆盖同一说话人）
 * **`CosyVoice Delete Speaker`**：删除已注册的说话人（同步持久化到 `spk2info.pt`）
 
@@ -134,9 +137,10 @@ sft 使用流程：先用 `CosyVoice Register Speaker` 注册（如 `spk_id=中�
 | `prompt_wav`    | zero\_shot 参考音频路径（服务端可访问的绝对路径；可先用 CosyVoice 源码自带的 `models/_cosyvoice_src/asset/zero_shot_prompt.wav` 验证） |
 | `prompt_text`   | 参考音频对应文字                                                                                                                                                     |
 | `sft_spk`       | sft 预置说话人（如 `中文男`/`中文女`）                                                                                                                                     |
-| `instruct_text` | instruct 指令（如 `请用广东话表达。`）                                                                                                                                    |
-| `seed`          | 随机种子，同种子可复现                                                                                                                                                  |
-| `stream`        | 流式合成（推荐开启，时间戳基于流式真实音频）                                                                                                                                       |
+| `instruct_text` | instruct 指令（如 `请用四川话表达。`）。**只描述说话方式，不要写正文**；空指令会报错提示。服务端会自动为无句末标点的指令补句号（给 LLM 明确的指令边界，降低指令被当作正文朗读的概率；此为模型采样行为，无法 100% 消除） |
+| `seed`          | 随机种子，同种子可复现（服务端合成前对 torch/np 置种）                                                                                                                       |
+| `stream`        | 流式合成（推荐开启，时间戳基于流式真实音频）。**注意：`speed≠1.0` 时自动切换为非流式**（CosyVoice 变速仅支持非流式）                                                    |
+| `speed`         | 语速倍率（0.5~2.0，默认 1.0=原速）。仅非流式支持变速；变速时自动关闭流式                                                                                              |
 | `pause_ms`      | 句间停顿时长，默认 120ms（防止句子粘连）                                                                                                                                      |
 | `device`        | **模型加载设备（运行中动态切换，无需重启服务）**：空=不干预（用服务端启动参数）；`cpu`=内存加载（不占显存，与 H3 视频生成同机推荐）；`cuda`=显存加载（合成更快）；`auto`=有 CUDA 自动用 GPU。切换会卸载并重载模型（本次合成含加载耗时） |
 | `idle_timeout`  | **空闲自动卸载秒数**：0=不干预（用服务端 `--idle_timeout`，默认 300）。服务常驻，空闲超时自动卸载模型释放内存/显存，下次请求自动重载                                                        |
