@@ -344,7 +344,9 @@ class CosyVoiceSRTFileWriter:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "srt": ("STRING", {"multiline": True, "tooltip": "来自 CosyVoiceTTSWithTimestamps 的 SRT 输出"}),
+                # forceInput: srt 只接受连线输入, 不在节点界面渲染 widget 容器
+                # (连线后 widget 本就为空, 预览请用 PreviewAny, 文件输出不受影响)
+                "srt": ("STRING", {"forceInput": True, "multiline": True, "tooltip": "来自 CosyVoiceTTSWithTimestamps 的 SRT 输出(仅连线输入)"}),
             },
             "optional": {
                 "filename_prefix": (
